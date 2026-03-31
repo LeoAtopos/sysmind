@@ -5,7 +5,8 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, ArrowRight, ArrowLeft, ArrowLeftRight, Minus, Trash2, MousePointer2, Download, Upload } from 'lucide-react';
+import { Search, ArrowRight, ArrowLeft, ArrowLeftRight, Minus, Trash2, MousePointer2, Download, Upload, Save, FilePlus2, ChevronDown, ChevronUp } from 'lucide-react';
+
 import { Node, Connection, ConnectionStyle, FocusedElement } from './types';
 
 const GRID_SIZE = 20;
@@ -176,17 +177,24 @@ const resolveNodeOverlaps = (inputNodes: Node[], lockedNodeId?: string) => {
 const TRANSLATIONS = {
   zh: {
     connLength: '连线长度',
-    enter: '新建节点/连接',
+    globalActions: '全局操作',
+    nodeActions: '节点焦点操作',
+    connectionActions: '连线焦点操作',
+    enterGlobal: '新建节点',
+    enterNode: '从节点新建连线',
+    enterConnection: '完成连线/新建目标节点',
     space: '编辑文字',
     tab: '切换样式',
-    ctrlArrows: '移动末端',
+    ctrlArrowsNode: '移动节点',
+    ctrlArrowsConnection: '移动末端',
     zoom: '缩放',
     zoomReset: '重置缩放',
     search: '搜索链接',
     undo: '撤销',
     redo: '还原',
     arrows: '移动焦点',
-    delete: '删除',
+    deleteNode: '删除节点',
+    deleteConnection: '删除连线',
     searchPlaceholder: '搜索节点进行链接...',
     noNodesFound: '未找到节点',
     untitledNode: '无标题节点',
@@ -195,23 +203,47 @@ const TRANSLATIONS = {
     tabToCycle: '按 Tab 键切换',
     export: '导出',
     import: '加载',
+    save: '保存',
+    newCanvas: '新建',
+    saveSuccess: '保存成功',
+    saveFailed: '保存失败',
+    saveUnavailable: '当前加载方式不支持直接覆盖保存，请使用“加载”按钮选择文件后再保存',
+    file: '文件',
+    path: '路径',
+    pathUnavailable: '浏览器安全限制，无法获取真实路径',
+    notWritableSource: '当前来源不可覆盖保存（请用“加载”按钮选择文件）',
     exportSuccess: '导出成功',
     importError: '文件格式错误',
+    stormSystemTitle: '风暴速度输出系统结构',
+    shortcuts: '快捷键',
+
+    showShortcuts: '展开',
+    hideShortcuts: '收起',
+
     emptyHint: '回车键开始创作',
+
+
   },
   en: {
     connLength: 'Conn Length',
-    enter: 'New Node / Connect',
+    globalActions: 'Global Actions',
+    nodeActions: 'Node-Focused',
+    connectionActions: 'Connection-Focused',
+    enterGlobal: 'Create Node',
+    enterNode: 'Create Connection from Node',
+    enterConnection: 'Complete Link / Create Target Node',
     space: 'Edit Text',
     tab: 'Cycle Style',
-    ctrlArrows: 'Move End',
+    ctrlArrowsNode: 'Move Node',
+    ctrlArrowsConnection: 'Move End',
     zoom: 'Zoom',
     zoomReset: 'Reset Zoom',
     search: 'Search Link',
     undo: 'Undo',
     redo: 'Redo',
     arrows: 'Move Focus',
-    delete: 'Delete',
+    deleteNode: 'Delete Node',
+    deleteConnection: 'Delete Connection',
     searchPlaceholder: 'Search nodes to link...',
     noNodesFound: 'No nodes found',
     untitledNode: 'Untitled Node',
@@ -220,8 +252,23 @@ const TRANSLATIONS = {
     tabToCycle: 'Press Tab to cycle',
     export: 'Export',
     import: 'Load',
+    save: 'Save',
+    newCanvas: 'New',
+    saveSuccess: 'Saved',
+    saveFailed: 'Save failed',
+    saveUnavailable: 'Direct overwrite save is unavailable for this loaded file. Use Load to pick the file first.',
+    file: 'File',
+    path: 'Path',
+    pathUnavailable: 'Real path is unavailable in browser for security reasons',
+    notWritableSource: 'Current source is not writable (use Load picker first)',
     exportSuccess: 'Exported',
     importError: 'Invalid file format',
+    stormSystemTitle: 'Storm Speed Output System Structure',
+    shortcuts: 'Shortcuts',
+
+    showShortcuts: 'Expand',
+    hideShortcuts: 'Collapse',
+
     emptyHint: 'Press ENTER to create',
   }
 };
@@ -240,6 +287,16 @@ export default function App() {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [defaultOffset, setDefaultOffset] = useState(100);
   const [lastDirection, setLastDirection] = useState({ x: 100 + 128, y: 0 });
+  const [loadedFileHandle, setLoadedFileHandle] = useState<any | null>(null);
+  const [loadedFileMeta, setLoadedFileMeta] = useState<{ name: string; path: string | null; writable: boolean } | null>(null);
+  const [isShortcutsExpanded, setIsShortcutsExpanded] = useState(true);
+  const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
+  const [selectedConnectionIds, setSelectedConnectionIds] = useState<string[]>([]);
+  const [selectionBox, setSelectionBox] = useState<{ start: { x: number; y: number }; current: { x: number; y: number } } | null>(null);
+
+
+
+
   const canvasOffset = useMemo(() => ({ x: canvasView.x, y: canvasView.y }), [canvasView.x, canvasView.y]);
   const canvasScale = canvasView.scale;
 
@@ -370,51 +427,172 @@ export default function App() {
     currentFocusRef.current = focused;
   }, [focused]);
 
-  // Export to JSON
+  const exportData = useMemo(() => ({
+    version: 1,
+    nodes,
+    connections,
+    canvasOffset,
+    canvasScale,
+    defaultOffset,
+  }), [nodes, connections, canvasOffset, canvasScale, defaultOffset]);
 
+  const applyImportedData = useCallback((data: any) => {
+    if (!Array.isArray(data.nodes) || !Array.isArray(data.connections)) {
+      throw new Error('invalid');
+    }
+    const loadedNodes: Node[] = data.nodes;
+    const loadedConns: Connection[] = data.connections;
+    setNodes(loadedNodes);
+    setConnections(loadedConns);
+    setFocused(null);
+    setCanvasView(prev => ({
+      x: typeof data.canvasOffset?.x === 'number' ? data.canvasOffset.x : prev.x,
+      y: typeof data.canvasOffset?.y === 'number' ? data.canvasOffset.y : prev.y,
+      scale: typeof data.canvasScale === 'number'
+        ? Math.max(MIN_SCALE, Math.min(MAX_SCALE, data.canvasScale))
+        : prev.scale,
+    }));
+    if (typeof data.defaultOffset === 'number') setDefaultOffset(data.defaultOffset);
+    pushHistory(loadedNodes, loadedConns, null);
+  }, [pushHistory]);
+
+  // Export to JSON
   const handleExport = useCallback(() => {
-    const data = {
-      version: 1,
-      nodes,
-      connections,
-      canvasOffset,
-      canvasScale,
-      defaultOffset,
-    };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = `sysmind-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
-  }, [nodes, connections, canvasOffset, canvasScale, defaultOffset]);
+  }, [exportData]);
+
+  const getBestEffortFilePath = useCallback((file: any, fallback?: string) => {
+    const realPath = typeof file?.path === 'string' && file.path.trim().length > 0 ? file.path : null;
+    const relativePath = typeof file?.webkitRelativePath === 'string' && file.webkitRelativePath.trim().length > 0
+      ? file.webkitRelativePath
+      : null;
+    if (realPath) return realPath;
+    if (relativePath) return relativePath;
+    if (fallback && !fallback.includes('fakepath')) return fallback;
+    return null;
+  }, []);
+
+  const handleSaveToLoadedFile = useCallback(async (): Promise<boolean> => {
+    try {
+      let targetHandle = loadedFileHandle;
+      if (!targetHandle) {
+        if (!(window as any).showSaveFilePicker) {
+          alert(t.saveUnavailable);
+          return false;
+        }
+        const suggestedName = loadedFileMeta?.name || `sysmind-${new Date().toISOString().slice(0, 10)}.json`;
+        targetHandle = await (window as any).showSaveFilePicker({
+          suggestedName,
+          types: [{
+            description: 'JSON Files',
+            accept: { 'application/json': ['.json'] },
+          }],
+        });
+        if (!targetHandle) return false;
+        setLoadedFileHandle(targetHandle);
+        setLoadedFileMeta(prev => ({
+          name: targetHandle.name || prev?.name || suggestedName,
+          path: null,
+          writable: true,
+        }));
+      }
+
+      if (typeof targetHandle.queryPermission === 'function') {
+        let permission = await targetHandle.queryPermission({ mode: 'readwrite' });
+        if (permission !== 'granted' && typeof targetHandle.requestPermission === 'function') {
+          permission = await targetHandle.requestPermission({ mode: 'readwrite' });
+        }
+        if (permission !== 'granted') {
+          throw new Error('permission denied');
+        }
+      }
+
+      const writable = await targetHandle.createWritable();
+      await writable.write(JSON.stringify(exportData, null, 2));
+      await writable.close();
+      alert(t.saveSuccess);
+      return true;
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return false;
+      const detail = err?.message ? `\n${err.message}` : '';
+      alert(`${t.saveFailed}${detail}`);
+      return false;
+    }
+  }, [loadedFileHandle, loadedFileMeta, exportData, t]);
+
+  const handleNewCanvas = useCallback(async () => {
+    const saved = await handleSaveToLoadedFile();
+    if (!saved) return;
+    setNodes([]);
+    setConnections([]);
+    setFocused(null);
+    setIsEditing(false);
+    setSearchQuery(null);
+    setSearchResults([]);
+    setSelectedIndex(0);
+    setCanvasView({ x: 0, y: 0, scale: 1 });
+    setLoadedFileHandle(null);
+    setLoadedFileMeta(null);
+    setHistory({
+      stack: [{ nodes: [], connections: [], focused: null }],
+      index: 0,
+    });
+  }, [handleSaveToLoadedFile]);
+
+  const handleImportFromPicker = useCallback(async () => {
+    try {
+      if (!(window as any).showOpenFilePicker) {
+        fileInputRef.current?.click();
+        return;
+      }
+      const [handle] = await (window as any).showOpenFilePicker({
+        multiple: false,
+        types: [{
+          description: 'JSON Files',
+          accept: { 'application/json': ['.json'] },
+        }],
+      });
+      if (!handle) return;
+      const file = await handle.getFile();
+      const content = await file.text();
+      const data = JSON.parse(content);
+      applyImportedData(data);
+      setLoadedFileHandle(handle);
+      setLoadedFileMeta({
+        name: handle.name || file.name || 'unknown.json',
+        path: getBestEffortFilePath(file),
+        writable: true,
+      });
+    } catch (err: any) {
+      if (err?.name !== 'AbortError') {
+        alert(t.importError);
+      }
+    }
+  }, [applyImportedData, getBestEffortFilePath, t]);
+
 
   // Load from JSON
   const handleImport = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    const pickedPath = e.target.value;
     const reader = new FileReader();
     reader.onload = (ev) => {
       try {
         const data = JSON.parse(ev.target?.result as string);
-        if (!Array.isArray(data.nodes) || !Array.isArray(data.connections)) {
-          throw new Error('invalid');
-        }
-        const loadedNodes: Node[] = data.nodes;
-        const loadedConns: Connection[] = data.connections;
-        setNodes(loadedNodes);
-        setConnections(loadedConns);
-        setFocused(null);
-        setCanvasView(prev => ({
-          x: typeof data.canvasOffset?.x === 'number' ? data.canvasOffset.x : prev.x,
-          y: typeof data.canvasOffset?.y === 'number' ? data.canvasOffset.y : prev.y,
-          scale: typeof data.canvasScale === 'number'
-            ? Math.max(MIN_SCALE, Math.min(MAX_SCALE, data.canvasScale))
-            : prev.scale,
-        }));
-        if (typeof data.defaultOffset === 'number') setDefaultOffset(data.defaultOffset);
-        pushHistory(loadedNodes, loadedConns, null);
+        applyImportedData(data);
+        setLoadedFileHandle(null);
+        setLoadedFileMeta({
+          name: file.name,
+          path: getBestEffortFilePath(file, pickedPath),
+          writable: false,
+        });
       } catch {
         alert(t.importError);
       }
@@ -422,7 +600,9 @@ export default function App() {
     reader.readAsText(file);
     // Reset so same file can be reloaded
     e.target.value = '';
-  }, [t, pushHistory]);
+  }, [t, applyImportedData, getBestEffortFilePath]);
+
+
 
   // Helper to get element by ID
   const getNode = (id: string) => nodes.find(n => n.id === id);
@@ -497,7 +677,20 @@ export default function App() {
     return fromId > toId ? -rawBend : rawBend;
   };
 
+  const getConnectionCurveOffsetRaw = (
+    conn: Connection,
+    from: { x: number; y: number },
+    to: { x: number; y: number },
+  ) => {
+    const len = Math.hypot(to.x - from.x, to.y - from.y);
+    if (typeof conn.curveBendRatio === 'number' && Number.isFinite(conn.curveBendRatio)) {
+      return conn.curveBendRatio * len;
+    }
+    return conn.curveBend ?? 0;
+  };
+
   const sampleConnectionCenterPath = (
+
     from: { x: number; y: number },
     to: { x: number; y: number },
     renderedBend: number,
@@ -544,8 +737,9 @@ export default function App() {
       ? { x: toNode.x, y: toNode.y }
       : (conn.tempToPos ?? { x: from.x + lastDirection.x, y: from.y + lastDirection.y });
 
-    const rawBend = conn.curveBend ?? 0;
+    const rawBend = getConnectionCurveOffsetRaw(conn, from, to);
     const renderedBend = conn.toId ? getRenderedCurveBend(conn.fromId, conn.toId, rawBend) : rawBend;
+
 
     if (renderedBend === 0) {
       return { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 };
@@ -626,15 +820,19 @@ export default function App() {
     const existingPairCount = completedConnections.filter(c => getConnectionPairKey(c.fromId, c.toId) === pairKey).length;
 
     const existingPaths = completedConnections
+
+
       .map(c => {
         const a = getNode(c.fromId);
         const b = getNode(c.toId);
         if (!a || !b) return null;
+        const rawBend = getConnectionCurveOffsetRaw(c, { x: a.x, y: a.y }, { x: b.x, y: b.y });
         return sampleConnectionCenterPath(
           { x: a.x, y: a.y },
           { x: b.x, y: b.y },
-          getRenderedCurveBend(c.fromId, c.toId, c.curveBend ?? 0),
+          getRenderedCurveBend(c.fromId, c.toId, rawBend),
         );
+
       })
       .filter((p): p is { x: number; y: number }[] => !!p);
 
@@ -665,6 +863,9 @@ export default function App() {
       if (existingPairCount > 0 && rawBend === 0) score += 9999;
       if (existingPairCount === 0 && rawBend !== 0) score += 40;
       score += Math.abs(rawBend) * 0.35;
+
+
+
 
       if (score < bestScore) {
         bestScore = score;
@@ -722,6 +923,8 @@ export default function App() {
       style: lastStyle,
       tempToPos: tempPos,
       curveBend: typeof curveBendOverride === 'number' ? curveBendOverride : (toId ? chooseBestCurveBend(fromId, toId, id) : 0),
+      curveBendRatio: undefined,
+
     };
     setConnections(prev => [...prev, newConn]);
     return newConn;
@@ -828,7 +1031,8 @@ export default function App() {
             const pendingConn = getConnection(focused.id);
             const nextBend = pendingConn ? chooseBestCurveBend(pendingConn.fromId, target.id, pendingConn.id) : 0;
             const nextConns = connections.map(c => 
-              c.id === focused.id ? { ...c, toId: target.id, tempToPos: undefined, curveBend: nextBend } : c
+              c.id === focused.id ? { ...c, toId: target.id, tempToPos: undefined, curveBend: nextBend, curveBendRatio: undefined } : c
+
             );
             setConnections(nextConns);
             pushHistory(nodes, nextConns, focused);
@@ -839,7 +1043,60 @@ export default function App() {
         return;
       }
 
+      const selectedTotal = selectedNodeIds.length + selectedConnectionIds.length;
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedTotal > 1) {
+        e.preventDefault();
+        const nodeDeleteSet = new Set(selectedNodeIds);
+        const connDeleteSet = new Set(selectedConnectionIds);
+
+        const deletedPoints: { x: number; y: number }[] = [];
+        nodes.forEach((n) => {
+          if (nodeDeleteSet.has(n.id)) deletedPoints.push({ x: n.x, y: n.y });
+        });
+        connections.forEach((c) => {
+          if (!connDeleteSet.has(c.id)) return;
+          const p = getConnectionFocusPoint(c);
+          if (p) deletedPoints.push(p);
+        });
+
+        const nextNodes = nodes.filter(n => !nodeDeleteSet.has(n.id));
+        const nextConns = connections.filter(c => {
+          if (connDeleteSet.has(c.id)) return false;
+          if (nodeDeleteSet.has(c.fromId)) return false;
+          if (c.toId && nodeDeleteSet.has(c.toId)) return false;
+          return true;
+        });
+
+        selectedNodeIds.forEach((id) => { delete nodeSourceRef.current[id]; });
+        Object.keys(nodeSourceRef.current).forEach((k) => {
+          if (nodeDeleteSet.has(nodeSourceRef.current[k])) delete nodeSourceRef.current[k];
+        });
+
+        const center = deletedPoints.length > 0
+          ? deletedPoints.reduce((acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }), { x: 0, y: 0 })
+          : { x: 0, y: 0 };
+        const deletedPos = deletedPoints.length > 0
+          ? { x: center.x / deletedPoints.length, y: center.y / deletedPoints.length }
+          : { x: 0, y: 0 };
+
+        const fallbackFocus = resolveDeleteFallbackFocus(nextNodes, nextConns, deletedPos);
+
+        if (fallbackFocus) {
+          skipAutoFocusOnceRef.current = true;
+        }
+
+        setIsEditing(false);
+        setNodes(nextNodes);
+        setConnections(nextConns);
+        setFocused(fallbackFocus);
+        setSelectedNodeIds([]);
+        setSelectedConnectionIds([]);
+        pushHistory(nextNodes, nextConns, fallbackFocus);
+        return;
+      }
+
       // Global Canvas Actions
+
       if (!focused) {
         if (e.key === 'Enter') {
           e.preventDefault();
@@ -908,6 +1165,8 @@ export default function App() {
                   toId: null,
                   tempToPos: deletedPos,
                   curveBend: 0,
+                  curveBendRatio: undefined,
+
                 };
               }
 
@@ -916,7 +1175,9 @@ export default function App() {
                 toId: null,
                 tempToPos: deletedPos,
                 curveBend: 0,
+                curveBendRatio: undefined,
               };
+
             })
             .filter((c): c is Connection => !!c);
 
@@ -980,7 +1241,8 @@ export default function App() {
             nodeSourceRef.current[newNode.id] = conn.fromId;
             const nextBend = chooseBestCurveBend(conn.fromId, newNode.id, conn.id);
 
-            const nextConns = connections.map(c => c.id === conn.id ? { ...c, toId: newNode.id, tempToPos: undefined, curveBend: nextBend } : c);
+            const nextConns = connections.map(c => c.id === conn.id ? { ...c, toId: newNode.id, tempToPos: undefined, curveBend: nextBend, curveBendRatio: undefined } : c);
+
             setConnections(nextConns);
             const nextFocused = { type: 'node', id: newNode.id };
             setFocused(nextFocused);
@@ -1064,7 +1326,7 @@ export default function App() {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [focused, isEditing, nodes, connections, canvasOffset, searchQuery, searchResults, selectedIndex, lastStyle, defaultOffset]);
+  }, [focused, isEditing, nodes, connections, canvasOffset, searchQuery, searchResults, selectedIndex, lastStyle, defaultOffset, selectedNodeIds, selectedConnectionIds]);
 
   // Spatial Navigation
   const moveFocus = (key: string) => {
@@ -1127,8 +1389,16 @@ export default function App() {
     }
 
     if (best) {
+      if (best.type === 'node') {
+        setSelectedNodeIds([best.id]);
+        setSelectedConnectionIds([]);
+      } else {
+        setSelectedNodeIds([]);
+        setSelectedConnectionIds([best.id]);
+      }
       updateFocus(best);
     }
+
   };
 
   // Search logic
@@ -1140,38 +1410,425 @@ export default function App() {
     }
   }, [searchQuery, nodes]);
 
-  // Dragging logic
-  const [draggingNode, setDraggingNode] = useState<string | null>(null);
-  const handleMouseDown = (e: React.MouseEvent, nodeId: string) => {
-    e.stopPropagation();
-    setDraggingNode(nodeId);
-    clearBeforePreviousOnNextFocusRef.current = true;
-    updateFocus({ type: 'node', id: nodeId });
+  useEffect(() => {
+    const nodeSet = new Set(nodes.map(n => n.id));
+    const connSet = new Set(connections.map(c => c.id));
+    setSelectedNodeIds(prev => prev.filter(id => nodeSet.has(id)));
+    setSelectedConnectionIds(prev => prev.filter(id => connSet.has(id)));
+  }, [nodes, connections]);
+
+  // Dragging & multi-select logic
+
+  const [draggingNodeIds, setDraggingNodeIds] = useState<string[] | null>(null);
+  const [draggingPendingConnectionIds, setDraggingPendingConnectionIds] = useState<string[] | null>(null);
+  const [draggingEndpoint, setDraggingEndpoint] = useState<{
+    connId: string;
+    endpoint: 'start' | 'end';
+    fixedNodeId: string;
+  } | null>(null);
+  const [draggingCurveControl, setDraggingCurveControl] = useState<{ connId: string } | null>(null);
+  const [hoveredEndpoint, setHoveredEndpoint] = useState<{ connId: string; endpoint: 'start' | 'end' } | null>(null);
+
+
+
+
+  const getSelectionWorldRect = (box: { start: { x: number; y: number }; current: { x: number; y: number } }) => {
+    const scale = canvasScale === 0 ? 1 : canvasScale;
+    const left = Math.min(box.start.x, box.current.x);
+    const right = Math.max(box.start.x, box.current.x);
+    const top = Math.min(box.start.y, box.current.y);
+    const bottom = Math.max(box.start.y, box.current.y);
+    return {
+      left: (left - canvasOffset.x) / scale,
+      right: (right - canvasOffset.x) / scale,
+      top: (top - canvasOffset.y) / scale,
+      bottom: (bottom - canvasOffset.y) / scale,
+    };
   };
 
+  const pointInRect = (x: number, y: number, rect: { left: number; right: number; top: number; bottom: number }) => {
+    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+  };
+
+  const getWorldPointFromClient = (clientX: number, clientY: number) => {
+    const scale = canvasScale === 0 ? 1 : canvasScale;
+    return {
+      x: (clientX - canvasOffset.x) / scale,
+      y: (clientY - canvasOffset.y) / scale,
+    };
+  };
+
+  const getNodeAtWorldPoint = (point: { x: number; y: number }, excludeNodeId?: string) => {
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      const node = nodes[i];
+      if (excludeNodeId && node.id === excludeNodeId) continue;
+      const box = getNodeBoxSize(node.text);
+      const halfW = box.width / 2;
+      const halfH = box.height / 2;
+      if (
+        point.x >= node.x - halfW &&
+        point.x <= node.x + halfW &&
+        point.y >= node.y - halfH &&
+        point.y <= node.y + halfH
+      ) {
+        return node;
+      }
+    }
+    return null;
+  };
+
+  const reverseStyle = (style: ConnectionStyle): ConnectionStyle => {
+    if (style === 'forward') return 'backward';
+    if (style === 'backward') return 'forward';
+    return style;
+  };
+
+
+  const getSelectedNodeIdsByCurrentSelection = (nodeIds: string[], connectionIds: string[]) => {
+    const set = new Set<string>(nodeIds);
+    connectionIds.forEach((connId) => {
+      const conn = getConnection(connId);
+      if (!conn) return;
+      set.add(conn.fromId);
+      if (conn.toId) set.add(conn.toId);
+    });
+    return Array.from(set);
+  };
+
+  const getPendingConnectionIdsBySelection = (connectionIds: string[]) => {
+    return connectionIds.filter((connId) => {
+      const conn = getConnection(connId);
+      return !!conn && !conn.toId && !!conn.tempToPos;
+    });
+  };
+
+  const applySelectionByBox = (box: { start: { x: number; y: number }; current: { x: number; y: number } }) => {
+    const worldRect = getSelectionWorldRect(box);
+
+    const nextNodeIds = nodes
+      .filter((n) => pointInRect(n.x, n.y, worldRect))
+      .map((n) => n.id);
+
+    const nextConnectionIds: string[] = [];
+
+    setSelectedNodeIds(nextNodeIds);
+    setSelectedConnectionIds(nextConnectionIds);
+
+    const total = nextNodeIds.length + nextConnectionIds.length;
+    if (total === 1) {
+      updateFocus({ type: 'node', id: nextNodeIds[0] });
+    } else {
+      updateFocus(null);
+    }
+  };
+
+  const handleNodeMouseDown = (e: React.MouseEvent, nodeId: string) => {
+    if (e.button === 2) return;
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    setDraggingCurveControl(null);
+
+    const isSelected = selectedNodeIds.includes(nodeId);
+
+    const totalSelected = selectedNodeIds.length + selectedConnectionIds.length;
+
+    if (!isSelected || totalSelected <= 1) {
+      setSelectedNodeIds([nodeId]);
+      setSelectedConnectionIds([]);
+      setDraggingNodeIds([nodeId]);
+      setDraggingPendingConnectionIds([]);
+      clearBeforePreviousOnNextFocusRef.current = true;
+      updateFocus({ type: 'node', id: nodeId });
+      return;
+    }
+
+    const movableNodeIds = getSelectedNodeIdsByCurrentSelection(selectedNodeIds, selectedConnectionIds);
+    setDraggingNodeIds(movableNodeIds);
+    setDraggingPendingConnectionIds(getPendingConnectionIdsBySelection(selectedConnectionIds));
+  };
+
+  const handleConnectionMouseDown = (e: React.MouseEvent, connId: string) => {
+    if (e.button === 2) return;
+    if (e.button !== 0) return;
+    e.stopPropagation();
+
+    if (focused?.type === 'connection' && focused.id === connId && isEditing) {
+      return;
+    }
+
+    skipNextConnectionCenterRef.current = true;
+
+    const isSelected = selectedConnectionIds.includes(connId);
+    const totalSelected = selectedNodeIds.length + selectedConnectionIds.length;
+
+    if (!isSelected || totalSelected <= 1) {
+      setSelectedNodeIds([]);
+      setSelectedConnectionIds([connId]);
+      setDraggingNodeIds(getSelectedNodeIdsByCurrentSelection([], [connId]));
+      setDraggingPendingConnectionIds(getPendingConnectionIdsBySelection([connId]));
+      if (!(focused?.type === 'connection' && focused.id === connId && isEditing)) {
+        clearBeforePreviousOnNextFocusRef.current = true;
+        updateFocus({ type: 'connection', id: connId });
+      }
+      return;
+    }
+
+    setDraggingNodeIds(getSelectedNodeIdsByCurrentSelection(selectedNodeIds, selectedConnectionIds));
+    setDraggingPendingConnectionIds(getPendingConnectionIdsBySelection(selectedConnectionIds));
+  };
+
+  const handleConnectionEndpointMouseDown = (e: React.MouseEvent, connId: string, endpoint: 'start' | 'end') => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+
+    const conn = getConnection(connId);
+    if (!conn) return;
+
+    const fromNode = getNode(conn.fromId);
+    if (!fromNode) return;
+
+    const endNode = conn.toId ? getNode(conn.toId) : null;
+    const world = getWorldPointFromClient(e.clientX, e.clientY);
+
+    skipNextConnectionCenterRef.current = true;
+
+    clearBeforePreviousOnNextFocusRef.current = true;
+    updateFocus({ type: 'connection', id: connId });
+
+    setSelectedNodeIds([]);
+    setSelectedConnectionIds([connId]);
+    setDraggingNodeIds(null);
+    setDraggingPendingConnectionIds(null);
+    setDraggingCurveControl(null);
+    setSelectionBox(null);
+    setIsPanning(false);
+
+
+    if (endpoint === 'end') {
+      setConnections(prev => prev.map(c => c.id === connId
+        ? { ...c, toId: null, tempToPos: world, curveBend: 0, curveBendRatio: undefined }
+        : c));
+
+
+      setDraggingEndpoint({ connId, endpoint, fixedNodeId: conn.fromId });
+      return;
+    }
+
+    if (!conn.toId || !endNode) return;
+
+    setConnections(prev => prev.map(c => c.id === connId
+      ? {
+          ...c,
+          fromId: conn.toId!,
+          toId: null,
+          tempToPos: world,
+
+          curveBend: 0,
+          curveBendRatio: undefined,
+          style: reverseStyle(c.style),
+
+        }
+      : c));
+    setDraggingEndpoint({ connId, endpoint, fixedNodeId: conn.toId });
+  };
+
+  const handleConnectionCurveControlMouseDown = (e: React.MouseEvent, connId: string) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+
+    skipNextConnectionCenterRef.current = true;
+    clearBeforePreviousOnNextFocusRef.current = true;
+    updateFocus({ type: 'connection', id: connId });
+
+    setSelectedNodeIds([]);
+    setSelectedConnectionIds([connId]);
+    setDraggingNodeIds(null);
+    setDraggingPendingConnectionIds(null);
+    setDraggingEndpoint(null);
+    setSelectionBox(null);
+    setIsPanning(false);
+    setDraggingCurveControl({ connId });
+  };
+
+  const handleCanvasMouseDown = (e: React.MouseEvent) => {
+
+    if (e.button === 2) {
+      if (focused?.type === 'connection') {
+        skipNextConnectionCenterRef.current = true;
+      }
+      setIsPanning(true);
+      return;
+    }
+
+
+    if (e.button !== 0) return;
+
+    updateFocus(null);
+    setSelectedNodeIds([]);
+    setSelectedConnectionIds([]);
+    setDraggingCurveControl(null);
+    setSelectionBox({
+      start: { x: e.clientX, y: e.clientY },
+      current: { x: e.clientX, y: e.clientY },
+    });
+
+  };
 
   const handleMouseMove = (e: React.MouseEvent) => {
-    if (draggingNode) {
+    if (draggingCurveControl) {
+      const world = getWorldPointFromClient(e.clientX, e.clientY);
+      setConnections(prev => prev.map(c => {
+        if (c.id !== draggingCurveControl.connId) return c;
+        const fromNode = getNode(c.fromId);
+        if (!fromNode) return c;
+        const toNode = c.toId ? getNode(c.toId) : null;
+        const from = { x: fromNode.x, y: fromNode.y };
+        const to = toNode
+          ? { x: toNode.x, y: toNode.y }
+          : (c.tempToPos ?? { x: from.x + lastDirection.x, y: from.y + lastDirection.y });
+        const dx = to.x - from.x;
+        const dy = to.y - from.y;
+        const len = Math.hypot(dx, dy);
+        if (len < 0.001) return { ...c, curveBend: 0, curveBendRatio: 0 };
+
+        const normalX = -dy / len;
+        const normalY = dx / len;
+        const midX = (from.x + to.x) / 2;
+        const midY = (from.y + to.y) / 2;
+        const projected = (world.x - midX) * normalX + (world.y - midY) * normalY;
+        const directionMultiplier = c.toId && c.fromId > c.toId ? -1 : 1;
+        const nextRenderedBend = projected / 0.75;
+        const nextRawBend = nextRenderedBend * directionMultiplier;
+        const nextRatio = nextRawBend / len;
+
+        return { ...c, curveBend: nextRawBend, curveBendRatio: nextRatio };
+
+      }));
+      return;
+    }
+
+    if (draggingEndpoint) {
+      const world = getWorldPointFromClient(e.clientX, e.clientY);
+      setHoveredEndpoint({ connId: draggingEndpoint.connId, endpoint: 'end' });
+      setConnections(prev => prev.map(c => (
+        c.id === draggingEndpoint.connId
+          ? { ...c, toId: null, tempToPos: world, curveBend: 0, curveBendRatio: undefined }
+          : c
+      )));
+      return;
+    }
+
+
+    if (!isPanning && !selectionBox) {
+      setHoveredEndpoint(getHoveredEndpointAtClientPoint(e.clientX, e.clientY));
+    } else if (hoveredEndpoint) {
+      setHoveredEndpoint(null);
+    }
+
+    if (draggingNodeIds && draggingNodeIds.length > 0) {
       const movementScale = canvasScale === 0 ? 1 : canvasScale;
-      setNodes(prev => prev.map(n => n.id === draggingNode ? { ...n, x: n.x + e.movementX / movementScale, y: n.y + e.movementY / movementScale } : n));
+      const dx = e.movementX / movementScale;
+      const dy = e.movementY / movementScale;
+      setNodes(prev => prev.map(n => draggingNodeIds.includes(n.id) ? { ...n, x: n.x + dx, y: n.y + dy } : n));
+      if (draggingPendingConnectionIds && draggingPendingConnectionIds.length > 0) {
+        setConnections(prev => prev.map(c => (
+          draggingPendingConnectionIds.includes(c.id) && c.tempToPos
+            ? { ...c, tempToPos: { x: c.tempToPos.x + dx, y: c.tempToPos.y + dy } }
+            : c
+        )));
+      }
     } else if (isPanning) {
       setCanvasView(prev => ({ ...prev, x: prev.x + e.movementX, y: prev.y + e.movementY }));
+    } else if (selectionBox) {
+      setSelectionBox(prev => prev ? { ...prev, current: { x: e.clientX, y: e.clientY } } : prev);
     }
   };
 
-  const handleMouseUp = () => {
-    if (draggingNode) {
+  const handleMouseUp = (e: React.MouseEvent) => {
+    if (draggingCurveControl) {
+      pushHistory(nodes, connections, focused);
+      setDraggingCurveControl(null);
+      setIsPanning(false);
+      return;
+    }
+
+    if (draggingEndpoint) {
+
+      const world = getWorldPointFromClient(e.clientX, e.clientY);
+      const snapNode = getNodeAtWorldPoint(world, draggingEndpoint.endpoint === 'end' ? undefined : draggingEndpoint.fixedNodeId);
+      const targetConn = getConnection(draggingEndpoint.connId);
+
+      if (targetConn) {
+        let nextConns = connections;
+
+        if (draggingEndpoint.endpoint === 'end') {
+          nextConns = connections.map(c => {
+            if (c.id !== draggingEndpoint.connId) return c;
+            if (snapNode) {
+              const nextBend = chooseBestCurveBend(c.fromId, snapNode.id, c.id);
+              return { ...c, toId: snapNode.id, tempToPos: undefined, curveBend: nextBend, curveBendRatio: undefined };
+
+            }
+            return { ...c, toId: null, tempToPos: world, curveBend: 0, curveBendRatio: undefined };
+
+          });
+        } else {
+          nextConns = connections.map(c => {
+            if (c.id !== draggingEndpoint.connId) return c;
+            if (snapNode) {
+              const nextBend = chooseBestCurveBend(snapNode.id, draggingEndpoint.fixedNodeId, c.id);
+              return {
+                ...c,
+                fromId: snapNode.id,
+                toId: draggingEndpoint.fixedNodeId,
+                tempToPos: undefined,
+                curveBend: nextBend,
+                curveBendRatio: undefined,
+                style: reverseStyle(c.style),
+
+              };
+            }
+            return { ...c, toId: null, tempToPos: world, curveBend: 0, curveBendRatio: undefined };
+
+          });
+        }
+
+        setConnections(nextConns);
+        pushHistory(nodes, nextConns, focused);
+      }
+
+      setDraggingEndpoint(null);
+      setHoveredEndpoint(null);
+      setIsPanning(false);
+      return;
+    }
+
+
+    if (draggingNodeIds && draggingNodeIds.length > 0) {
       pushHistory(nodes, connections, focused);
     }
-    setDraggingNode(null);
+
+    if (selectionBox) {
+      const dragDistance = Math.hypot(selectionBox.current.x - selectionBox.start.x, selectionBox.current.y - selectionBox.start.y);
+      if (dragDistance >= 4) {
+        applySelectionByBox(selectionBox);
+      }
+      setSelectionBox(null);
+    }
+
+    setDraggingNodeIds(null);
+    setDraggingPendingConnectionIds(null);
     setIsPanning(false);
   };
+
+
 
   useEffect(() => {
     if (nodes.length < 2) return;
 
-    setNodes(prev => resolveNodeOverlaps(prev, draggingNode ?? undefined));
-  }, [nodes, draggingNode]);
+    const lockedNodeId = draggingNodeIds && draggingNodeIds.length === 1 ? draggingNodeIds[0] : undefined;
+    setNodes(prev => resolveNodeOverlaps(prev, lockedNodeId));
+  }, [nodes, draggingNodeIds]);
 
   // Camera Tracking
 
@@ -1182,7 +1839,9 @@ export default function App() {
       inputRef.current.focus();
     }
 
-    if (!focused || isPanning || draggingNode || focused.type === 'node') return;
+    if (!focused || isPanning || draggingEndpoint || draggingCurveControl || (draggingNodeIds && draggingNodeIds.length > 0) || focused.type === 'node') return;
+
+
 
 
     if (focused.type === 'connection' && skipNextConnectionCenterRef.current) {
@@ -1219,7 +1878,8 @@ export default function App() {
         y: window.innerHeight / 2 - targetY * prev.scale
       }));
     }
-  }, [focused, nodes, connections, isPanning, draggingNode]);
+  }, [focused, nodes, connections, isPanning, draggingNodeIds, draggingEndpoint, draggingCurveControl]);
+
 
   // Auto-focus input
   useEffect(() => {
@@ -1257,6 +1917,77 @@ export default function App() {
     };
   };
 
+  const getConnectionHandlePoints = (conn: Connection) => {
+    const fromNode = getNode(conn.fromId);
+    if (!fromNode) return null;
+
+    const toNode = conn.toId ? getNode(conn.toId) : null;
+    const rawStartX = fromNode.x;
+    const rawStartY = fromNode.y;
+    const rawEndX = toNode ? toNode.x : (conn.tempToPos?.x ?? rawStartX + lastDirection.x);
+    const rawEndY = toNode ? toNode.y : (conn.tempToPos?.y ?? rawStartY + lastDirection.y);
+
+    const curveOffsetRaw = getConnectionCurveOffsetRaw(conn, { x: rawStartX, y: rawStartY }, { x: rawEndX, y: rawEndY });
+    const directionMultiplier = conn.toId && conn.fromId > conn.toId ? -1 : 1;
+    const curveOffset = curveOffsetRaw * directionMultiplier;
+
+
+    const centerDx = rawEndX - rawStartX;
+    const centerDy = rawEndY - rawStartY;
+    const centerLen = Math.hypot(centerDx, centerDy);
+    const normalX = centerLen === 0 ? 0 : -centerDy / centerLen;
+    const normalY = centerLen === 0 ? 0 : centerDx / centerLen;
+
+    const tangentLen = Math.max(26, centerLen * 0.22);
+    const c1CenterX = rawStartX + (centerLen === 0 ? 0 : (centerDx / centerLen) * tangentLen) + normalX * curveOffset;
+    const c1CenterY = rawStartY + (centerLen === 0 ? 0 : (centerDy / centerLen) * tangentLen) + normalY * curveOffset;
+    const c2CenterX = rawEndX - (centerLen === 0 ? 0 : (centerDx / centerLen) * tangentLen) + normalX * curveOffset;
+    const c2CenterY = rawEndY - (centerLen === 0 ? 0 : (centerDy / centerLen) * tangentLen) + normalY * curveOffset;
+
+    const startPoint = getEdgePoint(
+      { x: c1CenterX, y: c1CenterY },
+      { x: rawStartX, y: rawStartY },
+      fromNode.id,
+    );
+    const endPoint = toNode
+      ? getEdgePoint(
+          { x: c2CenterX, y: c2CenterY },
+          { x: rawEndX, y: rawEndY },
+          toNode.id,
+        )
+      : { x: rawEndX, y: rawEndY };
+
+    return {
+      start: { x: startPoint.x, y: startPoint.y },
+      end: { x: endPoint.x, y: endPoint.y },
+    };
+  };
+
+  const getHoveredEndpointAtClientPoint = (clientX: number, clientY: number) => {
+    const world = getWorldPointFromClient(clientX, clientY);
+    const threshold = 18 / (canvasScale === 0 ? 1 : canvasScale);
+
+    let best: { connId: string; endpoint: 'start' | 'end'; dist: number } | null = null;
+
+    for (const conn of connections) {
+      const points = getConnectionHandlePoints(conn);
+      if (!points) continue;
+
+      const startDist = Math.hypot(world.x - points.start.x, world.y - points.start.y);
+      if (startDist <= threshold && (!best || startDist < best.dist)) {
+        best = { connId: conn.id, endpoint: 'start', dist: startDist };
+      }
+
+      const endDist = Math.hypot(world.x - points.end.x, world.y - points.end.y);
+      if (endDist <= threshold && (!best || endDist < best.dist)) {
+        best = { connId: conn.id, endpoint: 'end', dist: endDist };
+      }
+    }
+
+    if (!best) return null;
+    return { connId: best.connId, endpoint: best.endpoint };
+  };
+
 
   useEffect(() => {
     if (searchQuery !== null && searchInputRef.current) {
@@ -1273,10 +2004,9 @@ export default function App() {
       className="w-full h-screen bg-[#F8F9FA] overflow-hidden relative font-sans select-none"
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
-      onMouseDown={() => {
-        updateFocus(null);
-        setIsPanning(true);
-      }}
+      onMouseLeave={() => setHoveredEndpoint(null)}
+      onMouseDown={handleCanvasMouseDown}
+      onContextMenu={(e) => e.preventDefault()}
     >
       {/* Grid Pattern */}
       <div 
@@ -1296,11 +2026,15 @@ export default function App() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.4 }}
-            className="absolute inset-0 flex items-center justify-center pointer-events-none"
+            className="absolute inset-0 flex flex-col items-center justify-center gap-2 pointer-events-none"
           >
+            <span className="text-base font-semibold text-slate-400 select-none tracking-wide">
+              {t.stormSystemTitle}
+            </span>
             <span className="text-2xl font-medium text-slate-300 select-none tracking-wide">
               {t.emptyHint}
             </span>
+
           </motion.div>
         )}
       </AnimatePresence>
@@ -1315,16 +2049,16 @@ export default function App() {
         <svg className="absolute inset-0 w-[5000px] h-[5000px] pointer-events-none overflow-visible">
           <defs>
             <marker id="arrowhead-end" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto" markerUnits="strokeWidth">
-              <path d="M 7 2 L 11 6 L 7 10" fill="none" stroke="#94A3B8" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M 5 2.5 L 11 6 L 5 9.5" fill="none" stroke="#94A3B8" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
             </marker>
             <marker id="arrowhead-start" markerWidth="12" markerHeight="12" refX="1" refY="6" orient="auto" markerUnits="strokeWidth">
-              <path d="M 5 2 L 1 6 L 5 10" fill="none" stroke="#94A3B8" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M 7 2.5 L 1 6 L 7 9.5" fill="none" stroke="#94A3B8" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
             </marker>
             <marker id="arrowhead-end-focused" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto" markerUnits="strokeWidth">
-              <path d="M 7 2 L 11 6 L 7 10" fill="none" stroke="#3B82F6" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M 5 2.5 L 11 6 L 5 9.5" fill="none" stroke="#3B82F6" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
             </marker>
             <marker id="arrowhead-start-focused" markerWidth="12" markerHeight="12" refX="1" refY="6" orient="auto" markerUnits="strokeWidth">
-              <path d="M 5 2 L 1 6 L 5 10" fill="none" stroke="#3B82F6" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M 7 2.5 L 1 6 L 7 9.5" fill="none" stroke="#3B82F6" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
             </marker>
           </defs>
           {connections.map(conn => {
@@ -1337,9 +2071,10 @@ export default function App() {
             const rawEndX = toNode ? toNode.x : (conn.tempToPos?.x ?? rawStartX + lastDirection.x);
             const rawEndY = toNode ? toNode.y : (conn.tempToPos?.y ?? rawStartY + lastDirection.y);
 
-            const curveOffsetRaw = conn.curveBend ?? 0;
+            const curveOffsetRaw = getConnectionCurveOffsetRaw(conn, { x: rawStartX, y: rawStartY }, { x: rawEndX, y: rawEndY });
             const directionMultiplier = conn.toId && conn.fromId > conn.toId ? -1 : 1;
             const curveOffset = curveOffsetRaw * directionMultiplier;
+
 
             const centerDx = rawEndX - rawStartX;
             const centerDy = rawEndY - rawStartY;
@@ -1382,8 +2117,21 @@ export default function App() {
 
 
             const isFocused = focused?.type === 'connection' && focused.id === conn.id;
-            const color = isFocused ? '#3B82F6' : '#94A3B8';
-            const strokeWidth = isFocused ? 3 : 2;
+            const isSelected = selectedConnectionIds.includes(conn.id);
+            const showStartHandle =
+              draggingEndpoint?.connId === conn.id
+              || (hoveredEndpoint?.connId === conn.id && hoveredEndpoint.endpoint === 'start');
+            const showEndHandle =
+              draggingEndpoint?.connId === conn.id
+              || (hoveredEndpoint?.connId === conn.id && hoveredEndpoint.endpoint === 'end');
+            const isDraggingCurveControl = draggingCurveControl?.connId === conn.id;
+            const showCurveControlHandle = centerLen > 0 && (isSelected || isDraggingCurveControl) && !draggingEndpoint;
+            const curveControlX = (rawStartX + rawEndX) / 2 + normalX * curveOffset * 0.75;
+            const curveControlY = (rawStartY + rawEndY) / 2 + normalY * curveOffset * 0.75;
+            const color = isFocused ? '#3B82F6' : (isSelected ? '#60A5FA' : '#94A3B8');
+            const strokeWidth = isFocused ? 3 : (isSelected ? 2.5 : 2);
+
+
 
             const labelBox = getConnectionLabelSize(conn.text);
             const labelWidth = labelBox.width;
@@ -1408,14 +2156,7 @@ export default function App() {
               <g
                 key={conn.id}
                 className="pointer-events-auto cursor-pointer"
-                onMouseDown={(e) => {
-                  e.stopPropagation();
-                  skipNextConnectionCenterRef.current = true;
-                  if (!(isFocused && isEditing)) {
-                    clearBeforePreviousOnNextFocusRef.current = true;
-                    updateFocus({ type: 'connection', id: conn.id });
-                  }
-                }}
+                onMouseDown={(e) => handleConnectionMouseDown(e, conn.id)}
 
                 onClick={(e) => { e.stopPropagation(); }}
               >
@@ -1428,16 +2169,78 @@ export default function App() {
                   markerStart={['backward', 'both'].includes(conn.style) ? `url(#${isFocused ? 'arrowhead-start-focused' : 'arrowhead-start'})` : undefined}
                   className="transition-colors duration-200"
                 />
+                {showCurveControlHandle && (
+                  <>
+                    <circle
+                      cx={curveControlX}
+                      cy={curveControlY}
+                      r={16}
+                      fill="transparent"
+                      onMouseDown={(e) => handleConnectionCurveControlMouseDown(e, conn.id)}
+                      className="cursor-grab"
+                    />
+                    <circle
+                      cx={curveControlX}
+                      cy={curveControlY}
+                      r={7}
+                      fill={isFocused ? '#3B82F6' : '#60A5FA'}
+                      stroke="#FFFFFF"
+                      strokeWidth={1.5}
+                      onMouseDown={(e) => handleConnectionCurveControlMouseDown(e, conn.id)}
+                      className="cursor-grab"
+                    />
+                  </>
+                )}
+                {showStartHandle && (
+
+                  <>
+                    <circle
+                      cx={startX}
+                      cy={startY}
+                      r={16}
+                      fill="transparent"
+                      onMouseDown={(e) => handleConnectionEndpointMouseDown(e, conn.id, 'start')}
+                      className="cursor-grab"
+                    />
+                    <circle
+                      cx={startX}
+                      cy={startY}
+                      r={8}
+                      fill={isFocused ? '#3B82F6' : '#94A3B8'}
+                      stroke="#FFFFFF"
+                      strokeWidth={1.5}
+                      onMouseDown={(e) => handleConnectionEndpointMouseDown(e, conn.id, 'start')}
+                      className="cursor-grab"
+                    />
+                  </>
+                )}
+                {showEndHandle && (
+                  <>
+                    <circle
+                      cx={endX}
+                      cy={endY}
+                      r={16}
+                      fill="transparent"
+                      onMouseDown={(e) => handleConnectionEndpointMouseDown(e, conn.id, 'end')}
+                      className="cursor-grab"
+                    />
+                    <circle
+                      cx={endX}
+                      cy={endY}
+                      r={8}
+                      fill={isFocused ? '#3B82F6' : '#94A3B8'}
+                      stroke="#FFFFFF"
+                      strokeWidth={1.5}
+                      onMouseDown={(e) => handleConnectionEndpointMouseDown(e, conn.id, 'end')}
+                      className="cursor-grab"
+                    />
+                  </>
+                )}
                 {/* Connection Label */}
                 {conn.text && !(isFocused && isEditing) && (
                   <g
                     pointerEvents="all"
-                    onMouseDown={(e) => {
-                      e.stopPropagation();
-                      skipNextConnectionCenterRef.current = true;
-                      clearBeforePreviousOnNextFocusRef.current = true;
-                      updateFocus({ type: 'connection', id: conn.id });
-                    }}
+                    onMouseDown={(e) => handleConnectionMouseDown(e, conn.id)}
                   >
                     <rect
                       x={labelRectX}
@@ -1476,12 +2279,7 @@ export default function App() {
                     y={labelRectY}
                     width={labelWidth}
                     height={labelHeight}
-                    onMouseDown={(e) => {
-                      e.stopPropagation();
-                      skipNextConnectionCenterRef.current = true;
-                      clearBeforePreviousOnNextFocusRef.current = true;
-                      updateFocus({ type: 'connection', id: conn.id });
-                    }}
+                    onMouseDown={(e) => handleConnectionMouseDown(e, conn.id)}
                   >
                     <div className="flex items-center justify-center h-full relative">
                       <textarea
@@ -1515,7 +2313,9 @@ export default function App() {
         {/* Nodes */}
         {nodes.map(node => {
           const isFocused = focused?.type === 'node' && focused.id === node.id;
+          const isSelected = selectedNodeIds.includes(node.id);
           const nodeBox = getNodeBoxSize(node.text);
+
           const nodeLines = nodeBox.lines;
           const textAlignClass = nodeLines.length > 1 ? 'text-left' : 'text-center';
           return (
@@ -1532,13 +2332,16 @@ export default function App() {
                 y: { duration: 0 },
                 scale: { type: 'spring', stiffness: 300, damping: 30 }
               }}
-              onMouseDown={(e) => handleMouseDown(e, node.id)}
+              onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
               style={{ width: nodeBox.width, height: nodeBox.height }}
               className={`absolute flex items-center justify-center rounded-xl border-2 transition-colors duration-200 cursor-grab active:cursor-grabbing
                 ${isFocused
                   ? 'bg-blue-50 border-blue-500 shadow-lg z-20'
-                  : 'bg-white border-slate-200 shadow-sm hover:border-slate-300 z-10'
+                  : isSelected
+                    ? 'bg-blue-50/60 border-blue-300 shadow-md z-[15]'
+                    : 'bg-white border-slate-200 shadow-sm hover:border-slate-300 z-10'
                 }`}
+
             >
               {isFocused && (
                 <textarea
@@ -1569,7 +2372,84 @@ export default function App() {
           );
         })}
 
+        <svg className="absolute inset-0 w-[5000px] h-[5000px] pointer-events-none overflow-visible z-30">
+          {connections.map(conn => {
+            const fromNode = getNode(conn.fromId);
+            const toNode = conn.toId ? getNode(conn.toId) : null;
+            if (!fromNode) return null;
+
+            const rawStartX = fromNode.x;
+            const rawStartY = fromNode.y;
+            const rawEndX = toNode ? toNode.x : (conn.tempToPos?.x ?? rawStartX + lastDirection.x);
+            const rawEndY = toNode ? toNode.y : (conn.tempToPos?.y ?? rawStartY + lastDirection.y);
+
+            const curveOffsetRaw = getConnectionCurveOffsetRaw(conn, { x: rawStartX, y: rawStartY }, { x: rawEndX, y: rawEndY });
+            const directionMultiplier = conn.toId && conn.fromId > conn.toId ? -1 : 1;
+            const curveOffset = curveOffsetRaw * directionMultiplier;
+
+            const centerDx = rawEndX - rawStartX;
+            const centerDy = rawEndY - rawStartY;
+            const centerLen = Math.hypot(centerDx, centerDy);
+            const normalX = centerLen === 0 ? 0 : -centerDy / centerLen;
+            const normalY = centerLen === 0 ? 0 : centerDx / centerLen;
+            const tangentLen = Math.max(26, centerLen * 0.22);
+            const c2CenterX = rawEndX - (centerLen === 0 ? 0 : (centerDx / centerLen) * tangentLen) + normalX * curveOffset;
+            const c2CenterY = rawEndY - (centerLen === 0 ? 0 : (centerDy / centerLen) * tangentLen) + normalY * curveOffset;
+
+            const endPoint = toNode
+              ? getEdgePoint(
+                  { x: c2CenterX, y: c2CenterY },
+                  { x: rawEndX, y: rawEndY },
+                  toNode.id,
+                )
+              : { x: rawEndX, y: rawEndY };
+
+            const isFocused = focused?.type === 'connection' && focused.id === conn.id;
+            const showEndHandle =
+              draggingEndpoint?.connId === conn.id
+              || (hoveredEndpoint?.connId === conn.id && hoveredEndpoint.endpoint === 'end');
+
+            if (!showEndHandle) return null;
+
+            return (
+              <g key={`end-handle-${conn.id}`} className="pointer-events-auto">
+                <circle
+                  cx={endPoint.x}
+                  cy={endPoint.y}
+                  r={16}
+                  fill="transparent"
+                  onMouseDown={(e) => handleConnectionEndpointMouseDown(e, conn.id, 'end')}
+                  className="cursor-grab"
+                />
+                <circle
+                  cx={endPoint.x}
+                  cy={endPoint.y}
+                  r={8}
+                  fill={isFocused ? '#3B82F6' : '#94A3B8'}
+                  stroke="#FFFFFF"
+                  strokeWidth={1.5}
+                  onMouseDown={(e) => handleConnectionEndpointMouseDown(e, conn.id, 'end')}
+                  className="cursor-grab"
+                />
+              </g>
+            );
+          })}
+        </svg>
+
       </motion.div>
+
+
+      {selectionBox && (
+        <div
+          className="absolute border border-blue-400 bg-blue-200/20 pointer-events-none z-30"
+          style={{
+            left: Math.min(selectionBox.start.x, selectionBox.current.x),
+            top: Math.min(selectionBox.start.y, selectionBox.current.y),
+            width: Math.abs(selectionBox.current.x - selectionBox.start.x),
+            height: Math.abs(selectionBox.current.y - selectionBox.start.y),
+          }}
+        />
+      )}
 
       {/* Search Overlay */}
       <AnimatePresence>
@@ -1578,6 +2458,7 @@ export default function App() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
+            onMouseDown={(e) => e.stopPropagation()}
             className="absolute bottom-12 left-1/2 -translate-x-1/2 w-80 bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden z-50"
           >
             <div className="p-3 border-bottom border-slate-100 flex items-center gap-2">
@@ -1600,7 +2481,8 @@ export default function App() {
                       if (focused?.type === 'connection') {
                         const pendingConn = getConnection(focused.id);
                         const nextBend = pendingConn ? chooseBestCurveBend(pendingConn.fromId, node.id, pendingConn.id) : 0;
-                        setConnections(prev => prev.map(c => c.id === focused.id ? { ...c, toId: node.id, tempToPos: undefined, curveBend: nextBend } : c));
+                        setConnections(prev => prev.map(c => c.id === focused.id ? { ...c, toId: node.id, tempToPos: undefined, curveBend: nextBend, curveBendRatio: undefined } : c));
+
                         setSearchQuery(null);
                       }
                     }}
@@ -1619,9 +2501,18 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {loadedFileMeta && (
+        <div onMouseDown={(e) => e.stopPropagation()} className="absolute top-6 left-1/2 -translate-x-1/2 max-w-[420px] bg-white/85 backdrop-blur-sm border border-slate-200 rounded-xl shadow-sm px-3 py-1.5 text-xs text-slate-700 font-medium truncate text-center z-40">
+          {loadedFileMeta.name}
+        </div>
+      )}
+
       {/* Controls Help */}
-      <div className="absolute top-6 left-6 flex flex-col gap-4">
-        <div className="flex items-center gap-6">
+      <div className="absolute top-6 left-6 flex flex-col gap-4 pointer-events-none">
+
+        <div className="flex items-center gap-6 pointer-events-auto">
+
+
           <h1 className="text-xl font-bold text-slate-800 flex items-center gap-2">
             <MousePointer2 className="text-blue-500" /> SysMind
           </h1>
@@ -1646,6 +2537,14 @@ export default function App() {
           </div>
           <div className="flex items-center gap-1 bg-white/80 backdrop-blur-sm border border-slate-200 p-1 rounded-xl shadow-sm">
             <button
+              onClick={(e) => { e.stopPropagation(); handleImportFromPicker(); }}
+              title={t.import}
+              className="flex items-center gap-1 px-2 py-1.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-600 text-xs font-medium"
+            >
+              <Upload size={14} />
+              {t.import}
+            </button>
+            <button
               onClick={(e) => { e.stopPropagation(); handleExport(); }}
               title={t.export}
               className="flex items-center gap-1 px-2 py-1.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-600 text-xs font-medium"
@@ -1654,12 +2553,20 @@ export default function App() {
               {t.export}
             </button>
             <button
-              onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}
-              title={t.import}
+              onClick={(e) => { e.stopPropagation(); handleNewCanvas(); }}
+              title={t.newCanvas}
               className="flex items-center gap-1 px-2 py-1.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-600 text-xs font-medium"
             >
-              <Upload size={14} />
-              {t.import}
+              <FilePlus2 size={14} />
+              {t.newCanvas}
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); handleSaveToLoadedFile(); }}
+              title={t.save}
+              className="flex items-center gap-1 px-2 py-1.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-600 text-xs font-medium"
+            >
+              <Save size={14} />
+              {t.save}
             </button>
             <input
               ref={fileInputRef}
@@ -1669,19 +2576,50 @@ export default function App() {
               onChange={handleImport}
             />
           </div>
+
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Kbd label="Enter" desc={t.enter} />
-          <Kbd label="Space" desc={t.space} />
-          <Kbd label="Tab" desc={t.tab} />
-          <Kbd label={`${ctrlKey}+Arrows`} desc={t.ctrlArrows} />
-          <Kbd label={`${ctrlKey}+ +/-`} desc={t.zoom} />
-          <Kbd label={`${ctrlKey}+0`} desc={t.zoomReset} />
-          <Kbd label="/" desc={t.search} />
-          <Kbd label="Arrows" desc={t.arrows} />
-          <Kbd label="Del" desc={t.delete} />
-          <Kbd label={`${ctrlKey}+Z`} desc={t.undo} />
-          <Kbd label={`${ctrlKey}+Y`} desc={t.redo} />
+
+        <div className="w-[300px] bg-white/80 backdrop-blur-sm border border-slate-200 rounded-xl shadow-sm p-2 pointer-events-auto">
+
+
+          <button
+            onClick={(e) => { e.stopPropagation(); setIsShortcutsExpanded(prev => !prev); }}
+            className="w-full flex items-center justify-between text-[11px] font-semibold text-slate-600 px-1 py-1 rounded hover:bg-slate-100 transition-colors"
+          >
+            <span>{t.shortcuts}</span>
+            <span className="flex items-center gap-1">
+              {isShortcutsExpanded ? t.hideShortcuts : t.showShortcuts}
+              {isShortcutsExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            </span>
+          </button>
+          {isShortcutsExpanded && (
+            <div className="mt-2 flex flex-col gap-2">
+              <ShortcutGroup title={t.globalActions}>
+                <Kbd label="Enter" desc={t.enterGlobal} />
+                <Kbd label={`${ctrlKey}+ +/-`} desc={t.zoom} />
+                <Kbd label={`${ctrlKey}+0`} desc={t.zoomReset} />
+                <Kbd label="Arrows" desc={t.arrows} />
+                <Kbd label={`${ctrlKey}+Z`} desc={t.undo} />
+                <Kbd label={`${ctrlKey}+Y`} desc={t.redo} />
+              </ShortcutGroup>
+
+              <ShortcutGroup title={t.nodeActions}>
+                <Kbd label="Space" desc={t.space} />
+                <Kbd label="Enter" desc={t.enterNode} />
+                <Kbd label={`${ctrlKey}+Arrows`} desc={t.ctrlArrowsNode} />
+                <Kbd label="Del" desc={t.deleteNode} />
+              </ShortcutGroup>
+
+              <ShortcutGroup title={t.connectionActions}>
+                <Kbd label="Space" desc={t.space} />
+                <Kbd label="Enter" desc={t.enterConnection} />
+                <Kbd label="Tab" desc={t.tab} />
+                <Kbd label="/" desc={t.search} />
+                <Kbd label={`${ctrlKey}+Arrows`} desc={t.ctrlArrowsConnection} />
+                <Kbd label="Del" desc={t.deleteConnection} />
+              </ShortcutGroup>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1700,11 +2638,22 @@ export default function App() {
   );
 }
 
-function Kbd({ label, desc }: { label: string; desc: string }) {
+function ShortcutGroup({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-center gap-1.5 bg-white/80 backdrop-blur-sm border border-slate-200 px-2 py-1 rounded-lg shadow-sm">
-      <kbd className="px-1.5 py-0.5 bg-slate-100 border border-slate-300 rounded text-[10px] font-bold text-slate-600 uppercase tracking-wider">{label}</kbd>
-      <span className="text-[10px] text-slate-500 font-medium">{desc}</span>
+    <div className="bg-white/80 backdrop-blur-sm border border-slate-200 rounded-xl shadow-sm p-2">
+      <div className="text-[10px] font-semibold text-slate-500 mb-1.5">{title}</div>
+      <div className="flex flex-col gap-1.5">{children}</div>
     </div>
   );
 }
+
+function Kbd({ label, desc }: { label: string; desc: string }) {
+  return (
+    <div className="w-full flex items-center justify-between gap-2 bg-white/80 backdrop-blur-sm border border-slate-200 px-2 py-1 rounded-lg shadow-sm">
+      <kbd className="px-1.5 py-0.5 bg-slate-100 border border-slate-300 rounded text-[10px] font-bold text-slate-600 uppercase tracking-wider shrink-0">{label}</kbd>
+      <span className="text-[10px] text-slate-500 font-medium text-right">{desc}</span>
+    </div>
+  );
+}
+
+

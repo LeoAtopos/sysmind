@@ -16,7 +16,9 @@ export interface Connection {
   style: ConnectionStyle;
   tempToPos?: { x: number; y: number };
   curveBend?: number;
+  curveBendRatio?: number;
 }
+
 
 
 export type FocusedElement = 
