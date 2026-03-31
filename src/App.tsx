@@ -11,10 +11,26 @@ import { Node, Connection, ConnectionStyle, FocusedElement } from './types';
 const GRID_SIZE = 20;
 const NODE_WIDTH = 120;
 const NODE_HEIGHT = 40;
+const NODE_MAX_WIDTH = NODE_WIDTH * 2;
+const NODE_MIN_WIDTH = NODE_WIDTH;
+const NODE_MIN_HEIGHT = NODE_HEIGHT;
+const NODE_TEXT_H_PADDING = 16;
+const NODE_TEXT_V_PADDING = 12;
+const NODE_TEXT_LINE_HEIGHT = 18;
+const CONNECTION_LABEL_MIN_WIDTH = 40;
+const CONNECTION_LABEL_MAX_WIDTH = CONNECTION_LABEL_MIN_WIDTH * 2;
+const CONNECTION_LABEL_H_PADDING = 20;
+const CONNECTION_LABEL_V_PADDING = 10;
+const CONNECTION_LABEL_LINE_HEIGHT = 14;
 const NODE_REPEL_PADDING = 12;
 const NODE_REPEL_MAX_ITERATIONS = 4;
 const CONNECTION_CURVE_BASE = 56;
 const CONNECTION_CURVE_STEP = 28;
+const RETURN_CONN_TARGET_OFFSET_Y = NODE_HEIGHT / 2 + 40;
+const ZOOM_STEP = 0.1;
+const MIN_SCALE = 0.4;
+const MAX_SCALE = 2.5;
+
 
 const measureText = (text: string, font: string) => {
   const canvas = document.createElement('canvas');
@@ -26,9 +42,75 @@ const measureText = (text: string, font: string) => {
   return text.length * 8;
 };
 
+const wrapTextLines = (text: string, maxTextWidth: number, font: string) => {
+  if (!text) return [''];
+  const words = text.split(/\s+/);
+  const lines: string[] = [];
+  let current = '';
 
+  const pushChunk = (chunk: string) => {
+    if (!chunk) return;
+    if (measureText(chunk, font) <= maxTextWidth) {
+      lines.push(chunk);
+      return;
+    }
+    let piece = '';
+    for (const ch of chunk) {
+      const test = piece + ch;
+      if (measureText(test, font) <= maxTextWidth || piece.length === 0) {
+        piece = test;
+      } else {
+        lines.push(piece);
+        piece = ch;
+      }
+    }
+    if (piece) lines.push(piece);
+  };
+
+  for (const word of words) {
+    if (!word) continue;
+    const next = current ? `${current} ${word}` : word;
+    if (measureText(next, font) <= maxTextWidth) {
+      current = next;
+    } else {
+      pushChunk(current);
+      current = '';
+      if (measureText(word, font) <= maxTextWidth) {
+        current = word;
+      } else {
+        pushChunk(word);
+      }
+    }
+  }
+  pushChunk(current);
+  return lines.length > 0 ? lines : [''];
+};
+
+const getAdaptiveTextBoxSize = (
+  text: string,
+  config: {
+    minWidth: number;
+    maxWidth: number;
+    hPadding: number;
+    vPadding: number;
+    lineHeight: number;
+    font: string;
+    fallbackText?: string;
+    minHeight?: number;
+  },
+) => {
+  const content = text || config.fallbackText || '';
+  const maxTextWidth = Math.max(1, config.maxWidth - config.hPadding);
+  const lines = wrapTextLines(content, maxTextWidth, config.font);
+  const widest = Math.max(...lines.map(line => measureText(line, config.font)), 0);
+  const width = Math.max(config.minWidth, Math.min(config.maxWidth, Math.ceil(widest + config.hPadding)));
+  const rawHeight = Math.ceil(lines.length * config.lineHeight + config.vPadding);
+  const height = Math.max(config.minHeight ?? 0, rawHeight);
+  return { width, height, lines };
+};
 
 const resolveNodeOverlaps = (inputNodes: Node[], lockedNodeId?: string) => {
+
 
   if (inputNodes.length < 2) return inputNodes;
 
@@ -98,6 +180,8 @@ const TRANSLATIONS = {
     space: '编辑文字',
     tab: '切换样式',
     ctrlArrows: '移动末端',
+    zoom: '缩放',
+    zoomReset: '重置缩放',
     search: '搜索链接',
     undo: '撤销',
     redo: '还原',
@@ -121,6 +205,8 @@ const TRANSLATIONS = {
     space: 'Edit Text',
     tab: 'Cycle Style',
     ctrlArrows: 'Move End',
+    zoom: 'Zoom',
+    zoomReset: 'Reset Zoom',
     search: 'Search Link',
     undo: 'Undo',
     redo: 'Redo',
@@ -147,13 +233,16 @@ export default function App() {
   const [isEditing, setIsEditing] = useState(false);
   const [shouldSelect, setShouldSelect] = useState(true);
   const [lastStyle, setLastStyle] = useState<ConnectionStyle>('forward');
-  const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
+  const [canvasView, setCanvasView] = useState({ x: 0, y: 0, scale: 1 });
   const [isPanning, setIsPanning] = useState(false);
   const [searchQuery, setSearchQuery] = useState<string | null>(null);
   const [searchResults, setSearchResults] = useState<Node[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [defaultOffset, setDefaultOffset] = useState(100);
   const [lastDirection, setLastDirection] = useState({ x: 100 + 128, y: 0 });
+  const canvasOffset = useMemo(() => ({ x: canvasView.x, y: canvasView.y }), [canvasView.x, canvasView.y]);
+  const canvasScale = canvasView.scale;
+
 
   // Undo/Redo State
   const [history, setHistory] = useState<{
@@ -223,17 +312,73 @@ export default function App() {
   }, []);
 
   const canvasRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
+
   const searchInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const skipNextConnectionCenterRef = useRef(false);
+  const currentNodeFocusRef = useRef<string | null>(null);
+  const previousNodeFocusRef = useRef<string | null>(null);
+  const nodeSourceRef = useRef<Record<string, string>>({});
+  const currentFocusRef = useRef<FocusedElement>(null);
+  const previousFocusRef = useRef<FocusedElement>(null);
+  const beforePreviousFocusRef = useRef<FocusedElement>(null);
+  const clearBeforePreviousOnNextFocusRef = useRef(false);
+  const skipAutoFocusOnceRef = useRef(false);
+  const skipFocusHistorySyncOnceRef = useRef(false);
+
+
+  const isSameFocus = (a: FocusedElement, b: FocusedElement) => a?.type === b?.type && a?.id === b?.id;
+
+
+
+
+  useEffect(() => {
+    if (focused?.type !== 'node') return;
+    if (currentNodeFocusRef.current === focused.id) return;
+    previousNodeFocusRef.current = currentNodeFocusRef.current;
+    currentNodeFocusRef.current = focused.id;
+  }, [focused]);
+
+  useEffect(() => {
+    if (skipFocusHistorySyncOnceRef.current) {
+      skipFocusHistorySyncOnceRef.current = false;
+      if (clearBeforePreviousOnNextFocusRef.current) {
+        clearBeforePreviousOnNextFocusRef.current = false;
+      }
+      return;
+    }
+
+    const current = currentFocusRef.current;
+    if (isSameFocus(current, focused)) {
+      if (clearBeforePreviousOnNextFocusRef.current) {
+        clearBeforePreviousOnNextFocusRef.current = false;
+      }
+      return;
+    }
+
+
+    if (clearBeforePreviousOnNextFocusRef.current) {
+      previousFocusRef.current = current;
+      beforePreviousFocusRef.current = null;
+      clearBeforePreviousOnNextFocusRef.current = false;
+    } else {
+      beforePreviousFocusRef.current = previousFocusRef.current;
+      previousFocusRef.current = current;
+    }
+
+    currentFocusRef.current = focused;
+  }, [focused]);
 
   // Export to JSON
+
   const handleExport = useCallback(() => {
     const data = {
       version: 1,
       nodes,
       connections,
       canvasOffset,
+      canvasScale,
       defaultOffset,
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -243,7 +388,7 @@ export default function App() {
     a.download = `sysmind-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
-  }, [nodes, connections, canvasOffset, defaultOffset]);
+  }, [nodes, connections, canvasOffset, canvasScale, defaultOffset]);
 
   // Load from JSON
   const handleImport = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -261,7 +406,13 @@ export default function App() {
         setNodes(loadedNodes);
         setConnections(loadedConns);
         setFocused(null);
-        if (typeof data.canvasOffset?.x === 'number') setCanvasOffset(data.canvasOffset);
+        setCanvasView(prev => ({
+          x: typeof data.canvasOffset?.x === 'number' ? data.canvasOffset.x : prev.x,
+          y: typeof data.canvasOffset?.y === 'number' ? data.canvasOffset.y : prev.y,
+          scale: typeof data.canvasScale === 'number'
+            ? Math.max(MIN_SCALE, Math.min(MAX_SCALE, data.canvasScale))
+            : prev.scale,
+        }));
         if (typeof data.defaultOffset === 'number') setDefaultOffset(data.defaultOffset);
         pushHistory(loadedNodes, loadedConns, null);
       } catch {
@@ -277,6 +428,70 @@ export default function App() {
   const getNode = (id: string) => nodes.find(n => n.id === id);
   const getConnection = (id: string) => connections.find(c => c.id === id);
   const getConnectionPairKey = (aId: string, bId: string) => aId < bId ? `${aId}::${bId}` : `${bId}::${aId}`;
+
+  const getNodeBoxSize = (nodeText: string) => {
+    return getAdaptiveTextBoxSize(nodeText, {
+      minWidth: NODE_MIN_WIDTH,
+      maxWidth: NODE_MAX_WIDTH,
+      hPadding: NODE_TEXT_H_PADDING,
+      vPadding: NODE_TEXT_V_PADDING,
+      lineHeight: NODE_TEXT_LINE_HEIGHT,
+      font: '500 14px Inter, ui-sans-serif, system-ui, sans-serif',
+      fallbackText: t.newNode,
+      minHeight: NODE_MIN_HEIGHT,
+    });
+  };
+
+  const getConnectionLabelSize = (text: string) => {
+    return getAdaptiveTextBoxSize(text, {
+      minWidth: CONNECTION_LABEL_MIN_WIDTH,
+      maxWidth: CONNECTION_LABEL_MAX_WIDTH,
+      hPadding: CONNECTION_LABEL_H_PADDING,
+      vPadding: CONNECTION_LABEL_V_PADDING,
+      lineHeight: CONNECTION_LABEL_LINE_HEIGHT,
+      font: '500 10px Inter, ui-sans-serif, system-ui, sans-serif',
+      minHeight: 22,
+    });
+  };
+
+  const resolveDeleteFallbackFocus = (
+
+    nextNodes: Node[],
+    nextConnections: Connection[],
+    deletedPos: { x: number; y: number },
+  ): FocusedElement => {
+    let best: FocusedElement = null;
+    let bestDist = Infinity;
+
+    for (const n of nextNodes) {
+      const d = Math.hypot(n.x - deletedPos.x, n.y - deletedPos.y);
+      if (d < bestDist) {
+        bestDist = d;
+        best = { type: 'node', id: n.id };
+      }
+    }
+
+    for (const c of nextConnections) {
+      const from = nextNodes.find(n => n.id === c.fromId);
+      if (!from) continue;
+      const to = c.toId ? nextNodes.find(n => n.id === c.toId) : null;
+      const end = to
+        ? { x: to.x, y: to.y }
+        : (c.tempToPos ?? { x: from.x + lastDirection.x, y: from.y + lastDirection.y });
+      const cx = (from.x + end.x) / 2;
+      const cy = (from.y + end.y) / 2;
+      const d = Math.hypot(cx - deletedPos.x, cy - deletedPos.y);
+      if (d < bestDist) {
+        bestDist = d;
+        best = { type: 'connection', id: c.id };
+      }
+    }
+
+    return best;
+  };
+
+
+
 
   const getRenderedCurveBend = (fromId: string, toId: string, rawBend: number) => {
     return fromId > toId ? -rawBend : rawBend;
@@ -320,6 +535,50 @@ export default function App() {
     return points;
   };
 
+  const getConnectionFocusPoint = (conn: Connection) => {
+    const from = getNode(conn.fromId);
+    if (!from) return null;
+
+    const toNode = conn.toId ? getNode(conn.toId) : null;
+    const to = toNode
+      ? { x: toNode.x, y: toNode.y }
+      : (conn.tempToPos ?? { x: from.x + lastDirection.x, y: from.y + lastDirection.y });
+
+    const rawBend = conn.curveBend ?? 0;
+    const renderedBend = conn.toId ? getRenderedCurveBend(conn.fromId, conn.toId, rawBend) : rawBend;
+
+    if (renderedBend === 0) {
+      return { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 };
+    }
+
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const len = Math.hypot(dx, dy);
+    if (len === 0) return { x: from.x, y: from.y };
+
+    const dirX = dx / len;
+    const dirY = dy / len;
+    const normalX = -dirY;
+    const normalY = dirX;
+    const tangentLen = Math.max(26, len * 0.22);
+
+    const c1 = {
+      x: from.x + dirX * tangentLen + normalX * renderedBend,
+      y: from.y + dirY * tangentLen + normalY * renderedBend,
+    };
+    const c2 = {
+      x: to.x - dirX * tangentLen + normalX * renderedBend,
+      y: to.y - dirY * tangentLen + normalY * renderedBend,
+    };
+
+    const t = 0.5;
+    const mt = 1 - t;
+    return {
+      x: mt * mt * mt * from.x + 3 * mt * mt * t * c1.x + 3 * mt * t * t * c2.x + t * t * t * to.x,
+      y: mt * mt * mt * from.y + 3 * mt * mt * t * c1.y + 3 * mt * t * t * c2.y + t * t * t * to.y,
+    };
+  };
+
   const pointToSegmentDistance = (
     p: { x: number; y: number },
     a: { x: number; y: number },
@@ -354,6 +613,8 @@ export default function App() {
     }
     return score;
   };
+
+
 
   const chooseBestCurveBend = (fromId: string, toId: string, excludeConnId?: string) => {
     const from = getNode(fromId);
@@ -430,96 +691,11 @@ export default function App() {
   };
 
   const handleConnectionTextChange = (connId: string, newText: string) => {
-    const textWidth = measureText(newText, '500 10px Inter, ui-sans-serif, system-ui, sans-serif');
-    const edgeToEdgeDist = Math.max(defaultOffset, textWidth + 80);
-
-    setConnections(prev => prev.map(c => {
-      if (c.id !== connId) return c;
-      
-      let updatedConn = { ...c, text: newText };
-      
-      // If it's a pending connection, update tempToPos (only expand while typing)
-      if (!c.toId && c.tempToPos) {
-        const fromNode = nodes.find(n => n.id === c.fromId);
-        if (fromNode) {
-          const dx = c.tempToPos.x - fromNode.x;
-          const dy = c.tempToPos.y - fromNode.y;
-          const currentCenterDist = Math.sqrt(dx * dx + dy * dy);
-          const radius = getNodeRadius(dx, dy);
-          const requiredCenterDist = edgeToEdgeDist + 2 * radius;
-          
-          if (currentCenterDist > 0 && currentCenterDist < requiredCenterDist) {
-            const scale = requiredCenterDist / currentCenterDist;
-            updatedConn.tempToPos = {
-              x: fromNode.x + dx * scale,
-              y: fromNode.y + dy * scale
-            };
-          }
-        }
-      }
-      return updatedConn;
-    }));
-    
-    // If it has a target node, push it (only expand while typing)
-    const conn = connections.find(c => c.id === connId);
-    if (conn && conn.toId) {
-      const fromNode = nodes.find(n => n.id === conn.fromId);
-      const toNode = nodes.find(n => n.id === conn.toId);
-      
-      if (fromNode && toNode) {
-        const dx = toNode.x - fromNode.x;
-        const dy = toNode.y - fromNode.y;
-        const currentCenterDist = Math.sqrt(dx * dx + dy * dy);
-        const radius = getNodeRadius(dx, dy);
-        const requiredCenterDist = edgeToEdgeDist + 2 * radius;
-        
-        if (currentCenterDist > 0 && currentCenterDist < requiredCenterDist) {
-          const scale = requiredCenterDist / currentCenterDist;
-          setNodes(prev => prev.map(n => n.id === toNode.id ? {
-            ...n,
-            x: fromNode.x + dx * scale,
-            y: fromNode.y + dy * scale
-          } : n));
-        }
-      }
-    }
+    setConnections(prev => prev.map(c => c.id === connId ? { ...c, text: newText } : c));
   };
 
-  const finalizeConnectionLength = (connId: string) => {
-    const conn = getConnection(connId);
-    if (!conn) return;
-
-    const textWidth = measureText(conn.text, '500 10px Inter, ui-sans-serif, system-ui, sans-serif');
-    const edgeToEdgeDist = Math.max(defaultOffset, textWidth + 80);
-
-    const fromNode = getNode(conn.fromId);
-    const toNode = conn.toId ? getNode(conn.toId) : null;
-    const toPos = toNode ? { x: toNode.x, y: toNode.y } : conn.tempToPos;
-
-    if (fromNode && toPos) {
-      const dx = toPos.x - fromNode.x;
-      const dy = toPos.y - fromNode.y;
-      const currentCenterDist = Math.sqrt(dx * dx + dy * dy);
-      const radius = getNodeRadius(dx, dy);
-      const targetCenterDist = edgeToEdgeDist + 2 * radius;
-
-      if (currentCenterDist > 0) {
-        const scale = targetCenterDist / currentCenterDist;
-        const newX = fromNode.x + dx * scale;
-        const newY = fromNode.y + dy * scale;
-
-        if (conn.toId) {
-          const nextNodes = nodes.map(n => n.id === conn.toId ? { ...n, x: newX, y: newY } : n);
-          setNodes(nextNodes);
-          pushHistory(nextNodes, connections, focused);
-        } else {
-          const nextConns = connections.map(c => c.id === conn.id ? { ...c, tempToPos: { x: newX, y: newY } } : c);
-          setConnections(nextConns);
-          pushHistory(nodes, nextConns, focused);
-        }
-        setLastDirection({ x: dx * scale, y: dy * scale });
-      }
-    }
+  const finalizeConnectionLength = (_connId: string) => {
+    pushHistory(nodes, connections, focused);
   };
 
   // Create a new node
@@ -531,7 +707,12 @@ export default function App() {
   };
 
   // Create a new connection
-  const createConnection = (fromId: string, toId: string | null = null, tempPos?: { x: number; y: number }) => {
+  const createConnection = (
+    fromId: string,
+    toId: string | null = null,
+    tempPos?: { x: number; y: number },
+    curveBendOverride?: number,
+  ) => {
     const id = Math.random().toString(36).substr(2, 9);
     const newConn: Connection = {
       id,
@@ -540,7 +721,7 @@ export default function App() {
       text: '',
       style: lastStyle,
       tempToPos: tempPos,
-      curveBend: toId ? chooseBestCurveBend(fromId, toId, id) : 0,
+      curveBend: typeof curveBendOverride === 'number' ? curveBendOverride : (toId ? chooseBestCurveBend(fromId, toId, id) : 0),
     };
     setConnections(prev => [...prev, newConn]);
     return newConn;
@@ -577,6 +758,33 @@ export default function App() {
         e.preventDefault();
         redo();
         return;
+      }
+
+      if (e.ctrlKey || e.metaKey) {
+        const isZoomIn = e.key === '=' || e.key === '+' || e.code === 'NumpadAdd';
+        const isZoomOut = e.key === '-' || e.key === '_' || e.code === 'NumpadSubtract';
+        const isZoomReset = e.key === '0' || e.code === 'Numpad0';
+
+        if (isZoomIn || isZoomOut || isZoomReset) {
+          e.preventDefault();
+          setCanvasView(prev => {
+            const rawNext = isZoomReset ? 1 : (isZoomIn ? prev.scale + ZOOM_STEP : prev.scale - ZOOM_STEP);
+            const nextScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, Number(rawNext.toFixed(2))));
+            if (nextScale === prev.scale) return prev;
+
+            const anchorX = window.innerWidth / 2;
+            const anchorY = window.innerHeight / 2;
+            const worldX = (anchorX - prev.x) / prev.scale;
+            const worldY = (anchorY - prev.y) / prev.scale;
+
+            return {
+              x: anchorX - worldX * nextScale,
+              y: anchorY - worldY * nextScale,
+              scale: nextScale,
+            };
+          });
+          return;
+        }
       }
 
       // If an input is already focused (pre-focused), let characters pass through to start IME
@@ -654,6 +862,22 @@ export default function App() {
           e.preventDefault();
           setShouldSelect(true);
           setIsEditing(true);
+        } else if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+          e.preventDefault();
+          const previousNodeId = nodeSourceRef.current[node.id] ?? previousNodeFocusRef.current;
+
+          const previousNode = previousNodeId ? getNode(previousNodeId) : null;
+          if (previousNode && previousNode.id !== node.id) {
+            const targetPos = {
+              x: node.x,
+              y: node.y + RETURN_CONN_TARGET_OFFSET_Y,
+            };
+            const newConn = createConnection(previousNode.id, null, targetPos);
+            const nextFocused = { type: 'connection', id: newConn.id };
+            setFocused(nextFocused);
+            pushHistory(nodes, [...connections, newConn], nextFocused);
+          }
+
         } else if (e.key === 'Enter') {
           e.preventDefault();
           const newConn = createConnection(node.id, null, { x: node.x + lastDirection.x, y: node.y + lastDirection.y });
@@ -666,13 +890,54 @@ export default function App() {
         } else if (e.key === 'Tab') {
           e.preventDefault();
         } else if (e.key === 'Delete' || e.key === 'Backspace') {
+          const deletedPos = { x: node.x, y: node.y };
           const newNodes = nodes.filter(n => n.id !== node.id);
-          const newConns = connections.filter(c => c.fromId !== node.id && c.toId !== node.id);
+          const newConns = connections
+            .map(c => {
+              const sourceDeleted = c.fromId === node.id;
+              const targetDeleted = c.toId === node.id;
+              if (!sourceDeleted && !targetDeleted) return c;
+
+              if (sourceDeleted && targetDeleted) return null;
+
+              if (sourceDeleted) {
+                if (!c.toId) return null;
+                return {
+                  ...c,
+                  fromId: c.toId,
+                  toId: null,
+                  tempToPos: deletedPos,
+                  curveBend: 0,
+                };
+              }
+
+              return {
+                ...c,
+                toId: null,
+                tempToPos: deletedPos,
+                curveBend: 0,
+              };
+            })
+            .filter((c): c is Connection => !!c);
+
+          delete nodeSourceRef.current[node.id];
+          Object.keys(nodeSourceRef.current).forEach((k) => {
+            if (nodeSourceRef.current[k] === node.id) delete nodeSourceRef.current[k];
+          });
+
+          const fallbackFocus = resolveDeleteFallbackFocus(newNodes, newConns, deletedPos);
+
+          if (fallbackFocus) {
+            skipAutoFocusOnceRef.current = true;
+          }
+          setIsEditing(false);
           setNodes(newNodes);
           setConnections(newConns);
-          setFocused(null);
-          pushHistory(newNodes, newConns, null);
+          setFocused(fallbackFocus);
+          pushHistory(newNodes, newConns, fallbackFocus);
         } else if ((e.ctrlKey || e.metaKey) && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+
+
           e.preventDefault();
           const step = 20;
           let dx = 0;
@@ -712,7 +977,9 @@ export default function App() {
             const x = conn.tempToPos?.x ?? (fromNode ? fromNode.x + lastDirection.x : 0);
             const y = conn.tempToPos?.y ?? (fromNode ? fromNode.y + lastDirection.y : 0);
             const newNode = createNode(x, y);
+            nodeSourceRef.current[newNode.id] = conn.fromId;
             const nextBend = chooseBestCurveBend(conn.fromId, newNode.id, conn.id);
+
             const nextConns = connections.map(c => c.id === conn.id ? { ...c, toId: newNode.id, tempToPos: undefined, curveBend: nextBend } : c);
             setConnections(nextConns);
             const nextFocused = { type: 'node', id: newNode.id };
@@ -729,10 +996,19 @@ export default function App() {
           setSearchQuery('');
         } else if (e.key === 'Delete' || e.key === 'Backspace') {
           const newConns = connections.filter(c => c.id !== conn.id);
+          const connFocusPoint = getConnectionFocusPoint(conn) ?? { x: 0, y: 0 };
+          const fallbackFocus = resolveDeleteFallbackFocus(nodes, newConns, connFocusPoint);
+
+          if (fallbackFocus) {
+            skipAutoFocusOnceRef.current = true;
+          }
+          setIsEditing(false);
           setConnections(newConns);
-          setFocused(null);
-          pushHistory(nodes, newConns, null);
+          setFocused(fallbackFocus);
+          pushHistory(nodes, newConns, fallbackFocus);
+
         } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+
           // Just trigger editing mode, browser handles the character
           setIsEditing(true);
         } else if ((e.ctrlKey || e.metaKey) && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
@@ -793,58 +1069,65 @@ export default function App() {
   // Spatial Navigation
   const moveFocus = (key: string) => {
     if (!focused) return;
-    
-    let currentPos = { x: 0, y: 0 };
+
+    const directionMap: Record<string, { x: number; y: number }> = {
+      ArrowRight: { x: 1, y: 0 },
+      ArrowLeft: { x: -1, y: 0 },
+      ArrowDown: { x: 0, y: 1 },
+      ArrowUp: { x: 0, y: -1 },
+    };
+    const dir = directionMap[key];
+    if (!dir) return;
+
+    let currentPos: { x: number; y: number } | null = null;
     if (focused.type === 'node') {
       const node = getNode(focused.id);
       if (node) currentPos = { x: node.x, y: node.y };
     } else {
       const conn = getConnection(focused.id);
-      if (conn) {
-        const from = getNode(conn.fromId);
-        const to = conn.toId ? getNode(conn.toId) : null;
-        const toPos = to ? { x: to.x, y: to.y } : (conn.tempToPos || { x: 0, y: 0 });
-        if (from) currentPos = { x: (from.x + toPos.x) / 2, y: (from.y + toPos.y) / 2 };
+      if (conn) currentPos = getConnectionFocusPoint(conn);
+    }
+    if (!currentPos) return;
+
+    const candidates: { type: 'node' | 'connection'; id: string; x: number; y: number }[] = [];
+    for (const n of nodes) {
+      if (focused.type === 'node' && focused.id === n.id) continue;
+      candidates.push({ type: 'node', id: n.id, x: n.x, y: n.y });
+    }
+    for (const c of connections) {
+      if (focused.type === 'connection' && focused.id === c.id) continue;
+      const pos = getConnectionFocusPoint(c);
+      if (!pos) continue;
+      candidates.push({ type: 'connection', id: c.id, x: pos.x, y: pos.y });
+    }
+
+    const perp = { x: -dir.y, y: dir.x };
+    let best: { type: 'node' | 'connection'; id: string } | null = null;
+    let bestScore = Infinity;
+
+    for (const cand of candidates) {
+      const dx = cand.x - currentPos.x;
+      const dy = cand.y - currentPos.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist < 0.001) continue;
+
+      const forward = dx * dir.x + dy * dir.y;
+      if (forward <= 0) continue;
+
+      const cos = forward / dist;
+      if (cos < 0.25) continue;
+
+      const lateral = Math.abs(dx * perp.x + dy * perp.y);
+      const score = dist + lateral * 1.6 + (1 - cos) * 220;
+
+      if (score < bestScore) {
+        bestScore = score;
+        best = { type: cand.type, id: cand.id };
       }
     }
 
-    const candidates: { type: 'node' | 'connection', id: string, x: number, y: number }[] = [];
-    nodes.forEach(n => {
-      if (focused.type === 'node' && focused.id === n.id) return;
-      candidates.push({ type: 'node', id: n.id, x: n.x, y: n.y });
-    });
-    connections.forEach(c => {
-      if (focused.type === 'connection' && focused.id === c.id) return;
-      const from = getNode(c.fromId);
-      const to = c.toId ? getNode(c.toId) : null;
-      const toPos = to ? { x: to.x, y: to.y } : (c.tempToPos || { x: 0, y: 0 });
-      if (from) candidates.push({ type: 'connection', id: c.id, x: (from.x + toPos.x) / 2, y: (from.y + toPos.y) / 2 });
-    });
-
-    let best: typeof candidates[0] | null = null;
-    let minScore = Infinity;
-
-    candidates.forEach(cand => {
-      const dx = cand.x - currentPos.x;
-      const dy = cand.y - currentPos.y;
-      
-      let isCorrectDirection = false;
-      if (key === 'ArrowRight' && dx > 0 && Math.abs(dy) < Math.abs(dx)) isCorrectDirection = true;
-      if (key === 'ArrowLeft' && dx < 0 && Math.abs(dy) < Math.abs(dx)) isCorrectDirection = true;
-      if (key === 'ArrowDown' && dy > 0 && Math.abs(dx) < Math.abs(dy)) isCorrectDirection = true;
-      if (key === 'ArrowUp' && dy < 0 && Math.abs(dx) < Math.abs(dy)) isCorrectDirection = true;
-
-      if (isCorrectDirection) {
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < minScore) {
-          minScore = dist;
-          best = cand;
-        }
-      }
-    });
-
     if (best) {
-      updateFocus({ type: (best as any).type, id: (best as any).id });
+      updateFocus(best);
     }
   };
 
@@ -862,14 +1145,17 @@ export default function App() {
   const handleMouseDown = (e: React.MouseEvent, nodeId: string) => {
     e.stopPropagation();
     setDraggingNode(nodeId);
+    clearBeforePreviousOnNextFocusRef.current = true;
     updateFocus({ type: 'node', id: nodeId });
   };
 
+
   const handleMouseMove = (e: React.MouseEvent) => {
     if (draggingNode) {
-      setNodes(prev => prev.map(n => n.id === draggingNode ? { ...n, x: n.x + e.movementX, y: n.y + e.movementY } : n));
+      const movementScale = canvasScale === 0 ? 1 : canvasScale;
+      setNodes(prev => prev.map(n => n.id === draggingNode ? { ...n, x: n.x + e.movementX / movementScale, y: n.y + e.movementY / movementScale } : n));
     } else if (isPanning) {
-      setCanvasOffset(prev => ({ x: prev.x + e.movementX, y: prev.y + e.movementY }));
+      setCanvasView(prev => ({ ...prev, x: prev.x + e.movementX, y: prev.y + e.movementY }));
     }
   };
 
@@ -890,11 +1176,19 @@ export default function App() {
   // Camera Tracking
 
   useEffect(() => {
-    if (focused && inputRef.current) {
+    if (skipAutoFocusOnceRef.current) {
+      skipAutoFocusOnceRef.current = false;
+    } else if (focused && inputRef.current) {
       inputRef.current.focus();
     }
-    
-    if (!focused || isPanning || draggingNode) return;
+
+    if (!focused || isPanning || draggingNode || focused.type === 'node') return;
+
+
+    if (focused.type === 'connection' && skipNextConnectionCenterRef.current) {
+      skipNextConnectionCenterRef.current = false;
+      return;
+    }
 
     let targetX = 0;
     let targetY = 0;
@@ -919,10 +1213,11 @@ export default function App() {
     }
 
     if (targetX !== 0 || targetY !== 0) {
-      setCanvasOffset({
-        x: window.innerWidth / 2 - targetX,
-        y: window.innerHeight / 2 - targetY
-      });
+      setCanvasView(prev => ({
+        ...prev,
+        x: window.innerWidth / 2 - targetX * prev.scale,
+        y: window.innerHeight / 2 - targetY * prev.scale
+      }));
     }
   }, [focused, nodes, connections, isPanning, draggingNode]);
 
@@ -943,12 +1238,14 @@ export default function App() {
     const dy = to.y - from.y;
     if (dx === 0 && dy === 0) return to;
 
+    const node = nodeId ? getNode(nodeId) : null;
+    const nodeBox = node ? getNodeBoxSize(node.text) : { width: NODE_WIDTH, height: NODE_HEIGHT };
     const isNodeFocused = nodeId ? (focused?.type === 'node' && focused.id === nodeId) : false;
     const scaleFactor = isNodeFocused ? 1.05 : 1;
 
     // Add a small padding (1px) to ensure the arrowhead tip touches the node boundary
-    const hw = (NODE_WIDTH * scaleFactor) / 2 + 1;
-    const hh = (NODE_HEIGHT * scaleFactor) / 2 + 1;
+    const hw = (nodeBox.width * scaleFactor) / 2 + 1;
+    const hh = (nodeBox.height * scaleFactor) / 2 + 1;
 
     const scaleX = dx === 0 ? Infinity : Math.abs(hw / dx);
     const scaleY = dy === 0 ? Infinity : Math.abs(hh / dy);
@@ -959,6 +1256,7 @@ export default function App() {
       y: to.y - dy * scale
     };
   };
+
 
   useEffect(() => {
     if (searchQuery !== null && searchInputRef.current) {
@@ -1009,8 +1307,9 @@ export default function App() {
 
       <motion.div 
         className="absolute inset-0"
-        animate={{ x: canvasOffset.x, y: canvasOffset.y }}
-        transition={(isPanning || draggingNode || (focused && !isEditing)) ? { duration: 0 } : { type: 'spring', stiffness: 150, damping: 25, mass: 0.8 }}
+        style={{ transformOrigin: '0 0' }}
+        animate={{ x: canvasOffset.x, y: canvasOffset.y, scale: canvasScale }}
+        transition={{ duration: 0 }}
       >
         {/* Connections */}
         <svg className="absolute inset-0 w-[5000px] h-[5000px] pointer-events-none overflow-visible">
@@ -1086,18 +1385,40 @@ export default function App() {
             const color = isFocused ? '#3B82F6' : '#94A3B8';
             const strokeWidth = isFocused ? 3 : 2;
 
-            const textWidth = measureText(conn.text, '500 10px Inter, ui-sans-serif, system-ui, sans-serif');
-            const labelWidth = Math.max(40, textWidth + 20);
+            const labelBox = getConnectionLabelSize(conn.text);
+            const labelWidth = labelBox.width;
+            const labelHeight = labelBox.height;
+            const labelLines = labelBox.lines;
             const labelX = curveOffset === 0
               ? (startX + endX) / 2
               : 0.125 * startX + 0.375 * c1x + 0.375 * c2x + 0.125 * endX;
             const labelY = curveOffset === 0
               ? (startY + endY) / 2
               : 0.125 * startY + 0.375 * c1y + 0.375 * c2y + 0.125 * endY;
-
+            const labelXRounded = Math.round(labelX);
+            const labelRectX = Math.round(labelX - labelWidth / 2);
+            const labelRectY = Math.round(labelY - labelHeight / 2);
+            const labelTextBlockHeight = labelLines.length * CONNECTION_LABEL_LINE_HEIGHT;
+            const labelFirstLineY = labelRectY
+              + (labelHeight - labelTextBlockHeight) / 2
+              + CONNECTION_LABEL_LINE_HEIGHT * 0.78;
 
             return (
-              <g key={conn.id} className="pointer-events-auto cursor-pointer" onClick={(e) => { e.stopPropagation(); updateFocus({ type: 'connection', id: conn.id }); }}>
+
+              <g
+                key={conn.id}
+                className="pointer-events-auto cursor-pointer"
+                onMouseDown={(e) => {
+                  e.stopPropagation();
+                  skipNextConnectionCenterRef.current = true;
+                  if (!(isFocused && isEditing)) {
+                    clearBeforePreviousOnNextFocusRef.current = true;
+                    updateFocus({ type: 'connection', id: conn.id });
+                  }
+                }}
+
+                onClick={(e) => { e.stopPropagation(); }}
+              >
                 <path
                   d={pathD}
                   fill="none"
@@ -1108,41 +1429,83 @@ export default function App() {
                   className="transition-colors duration-200"
                 />
                 {/* Connection Label */}
-                {(conn.text || isFocused) && (
-                  <foreignObject 
-                    x={labelX - labelWidth / 2} 
-                    y={labelY - 15} 
-                    width={labelWidth} 
-                    height="30"
+                {conn.text && !(isFocused && isEditing) && (
+                  <g
+                    pointerEvents="all"
+                    onMouseDown={(e) => {
+                      e.stopPropagation();
+                      skipNextConnectionCenterRef.current = true;
+                      clearBeforePreviousOnNextFocusRef.current = true;
+                      updateFocus({ type: 'connection', id: conn.id });
+                    }}
                   >
+                    <rect
+                      x={labelRectX}
+                      y={labelRectY}
+                      width={labelWidth}
+                      height={labelHeight}
+                      rx={6}
+                      fill="rgba(255,255,255,0.92)"
+                      stroke="#E2E8F0"
+                    />
+                    <text
+                      x={labelXRounded}
+                      textAnchor="middle"
+                      fontSize="10"
+                      fontWeight="500"
+                      fill="#475569"
+                      style={{ userSelect: 'none' }}
+                    >
+                      {labelLines.map((line, idx) => (
+                        <tspan
+                          key={`${conn.id}-line-${idx}`}
+                          x={labelXRounded}
+                          y={Math.round(labelFirstLineY + idx * CONNECTION_LABEL_LINE_HEIGHT)}
 
+                        >
+                          {line}
+                        </tspan>
+                      ))}
+                    </text>
+
+                  </g>
+                )}
+                {isFocused && (
+                  <foreignObject
+                    x={labelRectX}
+                    y={labelRectY}
+                    width={labelWidth}
+                    height={labelHeight}
+                    onMouseDown={(e) => {
+                      e.stopPropagation();
+                      skipNextConnectionCenterRef.current = true;
+                      clearBeforePreviousOnNextFocusRef.current = true;
+                      updateFocus({ type: 'connection', id: conn.id });
+                    }}
+                  >
                     <div className="flex items-center justify-center h-full relative">
-                      {isFocused && (
-                        <input
-                          ref={inputRef}
-                          className={`absolute inset-0 w-full bg-white border-2 border-blue-500 rounded px-1 text-xs text-center outline-none shadow-lg transition-opacity z-10
-                            ${isEditing ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
-                          value={conn.text}
-                          onChange={(e) => {
-                            if (!isEditing) setIsEditing(true);
-                            handleConnectionTextChange(conn.id, e.target.value);
-                          }}
-                          onBlur={() => {
-                            if (isEditing) {
-                              finalizeConnectionLength(conn.id);
-                              setIsEditing(false);
-                              pushHistory(nodes, connections, focused);
-                            }
-                          }}
-                        />
-                      )}
-                      {!(isFocused && isEditing) && conn.text && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/80 backdrop-blur-sm border border-slate-200 text-slate-600 font-medium shadow-sm whitespace-nowrap relative z-0">
-                          {conn.text}
-                        </span>
-                      )}
+                      <textarea
+                        ref={inputRef}
+                        rows={Math.max(1, labelLines.length)}
+                        className={`absolute inset-0 w-full h-full bg-white border-2 border-blue-500 rounded px-1 py-1 text-[10px] font-medium text-slate-600 text-center outline-none shadow-lg transition-opacity z-10 resize-none overflow-hidden leading-[14px]
+                          ${isEditing ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
+
+                        value={conn.text}
+                        onChange={(e) => {
+                          if (!isEditing) setIsEditing(true);
+                          handleConnectionTextChange(conn.id, e.target.value);
+                        }}
+                        onBlur={() => {
+                          if (isEditing) {
+                            finalizeConnectionLength(conn.id);
+                            setIsEditing(false);
+                            pushHistory(nodes, connections, focused);
+                          }
+                        }}
+                      />
                     </div>
                   </foreignObject>
+
                 )}
               </g>
             );
@@ -1152,35 +1515,38 @@ export default function App() {
         {/* Nodes */}
         {nodes.map(node => {
           const isFocused = focused?.type === 'node' && focused.id === node.id;
+          const nodeBox = getNodeBoxSize(node.text);
+          const nodeLines = nodeBox.lines;
+          const textAlignClass = nodeLines.length > 1 ? 'text-left' : 'text-center';
           return (
             <motion.div
               key={node.id}
               initial={false}
-              animate={{ 
-                x: node.x - NODE_WIDTH / 2, 
-                y: node.y - NODE_HEIGHT / 2,
-                scale: isFocused ? 1.05 : 1
+              animate={{
+                x: node.x - nodeBox.width / 2,
+                y: node.y - nodeBox.height / 2,
+                scale: isFocused ? 1.05 : 1,
               }}
-              transition={{ 
-                type: 'spring', 
-                stiffness: 300, 
-                damping: 30,
-                x: { duration: (draggingNode === node.id || isFocused) ? 0 : undefined },
-                y: { duration: (draggingNode === node.id || isFocused) ? 0 : undefined },
+              transition={{
+                x: { duration: 0 },
+                y: { duration: 0 },
                 scale: { type: 'spring', stiffness: 300, damping: 30 }
               }}
               onMouseDown={(e) => handleMouseDown(e, node.id)}
-              className={`absolute w-[120px] h-[40px] flex items-center justify-center rounded-xl border-2 transition-all duration-200 cursor-grab active:cursor-grabbing
-                ${isFocused 
-                  ? 'bg-blue-50 border-blue-500 shadow-lg z-20' 
+              style={{ width: nodeBox.width, height: nodeBox.height }}
+              className={`absolute flex items-center justify-center rounded-xl border-2 transition-colors duration-200 cursor-grab active:cursor-grabbing
+                ${isFocused
+                  ? 'bg-blue-50 border-blue-500 shadow-lg z-20'
                   : 'bg-white border-slate-200 shadow-sm hover:border-slate-300 z-10'
                 }`}
             >
               {isFocused && (
-                <input
+                <textarea
                   ref={inputRef}
-                  className={`absolute inset-0 w-full h-full bg-white rounded-xl text-center outline-none px-2 font-medium text-slate-800 transition-opacity z-10
+                  rows={Math.max(1, nodeLines.length)}
+                  className={`absolute inset-0 w-full h-full bg-white rounded-xl outline-none px-2 py-2 text-sm font-medium text-slate-800 transition-opacity z-10 resize-none overflow-hidden leading-[18px] ${textAlignClass}
                     ${isEditing ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
+
                   value={node.text}
                   onChange={(e) => {
                     if (!isEditing) setIsEditing(true);
@@ -1195,13 +1561,14 @@ export default function App() {
                 />
               )}
               {!(isFocused && isEditing) && (
-                <span className="text-sm font-medium text-slate-700 truncate px-2 relative z-0">
+                <span className={`text-sm font-medium text-slate-700 whitespace-pre-wrap break-words px-2 relative z-0 w-full ${textAlignClass}`}>
                   {node.text || <span className="text-slate-300 italic">{t.newNode}</span>}
                 </span>
               )}
             </motion.div>
           );
         })}
+
       </motion.div>
 
       {/* Search Overlay */}
@@ -1308,6 +1675,8 @@ export default function App() {
           <Kbd label="Space" desc={t.space} />
           <Kbd label="Tab" desc={t.tab} />
           <Kbd label={`${ctrlKey}+Arrows`} desc={t.ctrlArrows} />
+          <Kbd label={`${ctrlKey}+ +/-`} desc={t.zoom} />
+          <Kbd label={`${ctrlKey}+0`} desc={t.zoomReset} />
           <Kbd label="/" desc={t.search} />
           <Kbd label="Arrows" desc={t.arrows} />
           <Kbd label="Del" desc={t.delete} />
