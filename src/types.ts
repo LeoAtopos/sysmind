@@ -15,7 +15,9 @@ export interface Connection {
   text: string;
   style: ConnectionStyle;
   tempToPos?: { x: number; y: number };
+  curveBend?: number;
 }
+
 
 export type FocusedElement = 
   | { type: 'node'; id: string }

@@ -11,6 +11,10 @@ import { Node, Connection, ConnectionStyle, FocusedElement } from './types';
 const GRID_SIZE = 20;
 const NODE_WIDTH = 120;
 const NODE_HEIGHT = 40;
+const NODE_REPEL_PADDING = 12;
+const NODE_REPEL_MAX_ITERATIONS = 4;
+const CONNECTION_CURVE_BASE = 56;
+const CONNECTION_CURVE_STEP = 28;
 
 const measureText = (text: string, font: string) => {
   const canvas = document.createElement('canvas');
@@ -22,13 +26,78 @@ const measureText = (text: string, font: string) => {
   return text.length * 8;
 };
 
+
+
+const resolveNodeOverlaps = (inputNodes: Node[], lockedNodeId?: string) => {
+
+  if (inputNodes.length < 2) return inputNodes;
+
+  const nodes = inputNodes.map(n => ({ ...n }));
+  const minDistX = NODE_WIDTH + NODE_REPEL_PADDING;
+  const minDistY = NODE_HEIGHT + NODE_REPEL_PADDING;
+
+  for (let iter = 0; iter < NODE_REPEL_MAX_ITERATIONS; iter++) {
+    let movedInIteration = false;
+
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const a = nodes[i];
+        const b = nodes[j];
+
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const overlapX = minDistX - Math.abs(dx);
+        const overlapY = minDistY - Math.abs(dy);
+
+        if (overlapX <= 0 || overlapY <= 0) continue;
+
+        const lockA = lockedNodeId === a.id;
+        const lockB = lockedNodeId === b.id;
+
+        const useX = overlapX < overlapY;
+        const baseSign = useX
+          ? (Math.abs(dx) < 0.001 ? (i % 2 === 0 ? -1 : 1) : Math.sign(dx))
+          : (Math.abs(dy) < 0.001 ? (j % 2 === 0 ? -1 : 1) : Math.sign(dy));
+        const push = (useX ? overlapX : overlapY) + 0.5;
+
+        let moveA = -baseSign * (push / 2);
+        let moveB = baseSign * (push / 2);
+
+        if (lockA && !lockB) {
+          moveA = 0;
+          moveB = baseSign * push;
+        } else if (!lockA && lockB) {
+          moveA = -baseSign * push;
+          moveB = 0;
+        }
+
+        if (useX) {
+          if (!lockA) a.x += moveA;
+          if (!lockB) b.x += moveB;
+        } else {
+          if (!lockA) a.y += moveA;
+          if (!lockB) b.y += moveB;
+        }
+
+        movedInIteration = true;
+      }
+    }
+
+    if (!movedInIteration) break;
+  }
+
+  const changed = nodes.some((n, idx) => n.x !== inputNodes[idx].x || n.y !== inputNodes[idx].y);
+  return changed ? nodes : inputNodes;
+};
+
+
 const TRANSLATIONS = {
   zh: {
     connLength: '连线长度',
     enter: '新建节点/连接',
     space: '编辑文字',
     tab: '切换样式',
-    ctrlArrows: '对齐方向',
+    ctrlArrows: '移动末端',
     search: '搜索链接',
     undo: '撤销',
     redo: '还原',
@@ -51,7 +120,7 @@ const TRANSLATIONS = {
     enter: 'New Node / Connect',
     space: 'Edit Text',
     tab: 'Cycle Style',
-    ctrlArrows: 'Snap Dir',
+    ctrlArrows: 'Move End',
     search: 'Search Link',
     undo: 'Undo',
     redo: 'Redo',
@@ -207,8 +276,147 @@ export default function App() {
   // Helper to get element by ID
   const getNode = (id: string) => nodes.find(n => n.id === id);
   const getConnection = (id: string) => connections.find(c => c.id === id);
+  const getConnectionPairKey = (aId: string, bId: string) => aId < bId ? `${aId}::${bId}` : `${bId}::${aId}`;
+
+  const getRenderedCurveBend = (fromId: string, toId: string, rawBend: number) => {
+    return fromId > toId ? -rawBend : rawBend;
+  };
+
+  const sampleConnectionCenterPath = (
+    from: { x: number; y: number },
+    to: { x: number; y: number },
+    renderedBend: number,
+    steps = 16,
+  ) => {
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const len = Math.hypot(dx, dy);
+    if (len === 0) return [from, to];
+
+    const dirX = dx / len;
+    const dirY = dy / len;
+    const normalX = -dirY;
+    const normalY = dirX;
+    const tangentLen = Math.max(26, len * 0.22);
+
+    const c1 = {
+      x: from.x + dirX * tangentLen + normalX * renderedBend,
+      y: from.y + dirY * tangentLen + normalY * renderedBend,
+    };
+    const c2 = {
+      x: to.x - dirX * tangentLen + normalX * renderedBend,
+      y: to.y - dirY * tangentLen + normalY * renderedBend,
+    };
+
+    const points: { x: number; y: number }[] = [];
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const mt = 1 - t;
+      points.push({
+        x: mt * mt * mt * from.x + 3 * mt * mt * t * c1.x + 3 * mt * t * t * c2.x + t * t * t * to.x,
+        y: mt * mt * mt * from.y + 3 * mt * mt * t * c1.y + 3 * mt * t * t * c2.y + t * t * t * to.y,
+      });
+    }
+    return points;
+  };
+
+  const pointToSegmentDistance = (
+    p: { x: number; y: number },
+    a: { x: number; y: number },
+    b: { x: number; y: number },
+  ) => {
+    const abx = b.x - a.x;
+    const aby = b.y - a.y;
+    const apx = p.x - a.x;
+    const apy = p.y - a.y;
+    const denom = abx * abx + aby * aby;
+    if (denom === 0) return Math.hypot(apx, apy);
+    const t = Math.max(0, Math.min(1, (apx * abx + apy * aby) / denom));
+    const qx = a.x + abx * t;
+    const qy = a.y + aby * t;
+    return Math.hypot(p.x - qx, p.y - qy);
+  };
+
+  const overlapPenalty = (pathA: { x: number; y: number }[], pathB: { x: number; y: number }[]) => {
+    const threshold = 22;
+    let score = 0;
+
+    for (const p of pathA) {
+      let best = Infinity;
+      for (let i = 0; i < pathB.length - 1; i++) {
+        const d = pointToSegmentDistance(p, pathB[i], pathB[i + 1]);
+        if (d < best) best = d;
+      }
+      if (best < threshold) {
+        const diff = threshold - best;
+        score += diff * diff;
+      }
+    }
+    return score;
+  };
+
+  const chooseBestCurveBend = (fromId: string, toId: string, excludeConnId?: string) => {
+    const from = getNode(fromId);
+    const to = getNode(toId);
+    if (!from || !to) return 0;
+
+    const completedConnections = connections.filter((c): c is Connection & { toId: string } => !!c.toId && c.id !== excludeConnId);
+    const pairKey = getConnectionPairKey(fromId, toId);
+    const existingPairCount = completedConnections.filter(c => getConnectionPairKey(c.fromId, c.toId) === pairKey).length;
+
+    const existingPaths = completedConnections
+      .map(c => {
+        const a = getNode(c.fromId);
+        const b = getNode(c.toId);
+        if (!a || !b) return null;
+        return sampleConnectionCenterPath(
+          { x: a.x, y: a.y },
+          { x: b.x, y: b.y },
+          getRenderedCurveBend(c.fromId, c.toId, c.curveBend ?? 0),
+        );
+      })
+      .filter((p): p is { x: number; y: number }[] => !!p);
+
+    const maxLevel = Math.max(4, Math.ceil(existingPairCount / 2) + 3);
+    const candidates: number[] = [0];
+    for (let level = 1; level <= maxLevel; level++) {
+      const mag = CONNECTION_CURVE_BASE + (level - 1) * CONNECTION_CURVE_STEP;
+      candidates.push(mag, -mag);
+    }
+
+    let bestBend = 0;
+    let bestScore = Infinity;
+
+    for (const rawBend of candidates) {
+      const renderedBend = getRenderedCurveBend(fromId, toId, rawBend);
+      const testPath = sampleConnectionCenterPath(
+        { x: from.x, y: from.y },
+        { x: to.x, y: to.y },
+        renderedBend,
+      );
+
+      let score = 0;
+      for (const p of existingPaths) {
+        score += overlapPenalty(testPath, p);
+        score += overlapPenalty(p, testPath) * 0.5;
+      }
+
+      if (existingPairCount > 0 && rawBend === 0) score += 9999;
+      if (existingPairCount === 0 && rawBend !== 0) score += 40;
+      score += Math.abs(rawBend) * 0.35;
+
+      if (score < bestScore) {
+        bestScore = score;
+        bestBend = rawBend;
+      }
+    }
+
+    return bestBend;
+  };
+
 
   // Helper to calculate intersection with node boundary
+
   const getNodeRadius = (dx: number, dy: number) => {
     if (dx === 0 && dy === 0) return 0;
     const hw = NODE_WIDTH / 2 + 4;
@@ -331,7 +539,8 @@ export default function App() {
       toId,
       text: '',
       style: lastStyle,
-      tempToPos: tempPos
+      tempToPos: tempPos,
+      curveBend: toId ? chooseBestCurveBend(fromId, toId, id) : 0,
     };
     setConnections(prev => [...prev, newConn]);
     return newConn;
@@ -372,6 +581,13 @@ export default function App() {
 
       // If an input is already focused (pre-focused), let characters pass through to start IME
       if (e.target === inputRef.current && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        // Space is used as edit shortcut and should not be inserted as content on first press
+        if (e.key === ' ') {
+          e.preventDefault();
+          setShouldSelect(true);
+          setIsEditing(true);
+          return;
+        }
         // Special case: if it's '/' on a connection, we want the search shortcut instead of typing
         if (focused?.type === 'connection' && e.key === '/') {
           // Fall through to the specific handler below
@@ -401,8 +617,10 @@ export default function App() {
           e.preventDefault();
           const target = searchResults[selectedIndex];
           if (target && focused?.type === 'connection') {
+            const pendingConn = getConnection(focused.id);
+            const nextBend = pendingConn ? chooseBestCurveBend(pendingConn.fromId, target.id, pendingConn.id) : 0;
             const nextConns = connections.map(c => 
-              c.id === focused.id ? { ...c, toId: target.id, tempToPos: undefined } : c
+              c.id === focused.id ? { ...c, toId: target.id, tempToPos: undefined, curveBend: nextBend } : c
             );
             setConnections(nextConns);
             pushHistory(nodes, nextConns, focused);
@@ -494,7 +712,8 @@ export default function App() {
             const x = conn.tempToPos?.x ?? (fromNode ? fromNode.x + lastDirection.x : 0);
             const y = conn.tempToPos?.y ?? (fromNode ? fromNode.y + lastDirection.y : 0);
             const newNode = createNode(x, y);
-            const nextConns = connections.map(c => c.id === conn.id ? { ...c, toId: newNode.id, tempToPos: undefined } : c);
+            const nextBend = chooseBestCurveBend(conn.fromId, newNode.id, conn.id);
+            const nextConns = connections.map(c => c.id === conn.id ? { ...c, toId: newNode.id, tempToPos: undefined, curveBend: nextBend } : c);
             setConnections(nextConns);
             const nextFocused = { type: 'node', id: newNode.id };
             setFocused(nextFocused);
@@ -521,28 +740,26 @@ export default function App() {
           const fromNode = getNode(conn.fromId);
           if (!fromNode) return;
 
-          let edgeToEdgeDist = defaultOffset;
-          if (conn.text) {
-            const textWidth = measureText(conn.text, '500 10px Inter, ui-sans-serif, system-ui, sans-serif');
-            edgeToEdgeDist = Math.max(defaultOffset, textWidth + 80);
-          }
-
+          const step = GRID_SIZE;
           let dx = 0;
           let dy = 0;
-          if (e.key === 'ArrowRight') dx = 1;
-          if (e.key === 'ArrowLeft') dx = -1;
-          if (e.key === 'ArrowDown') dy = 1;
-          if (e.key === 'ArrowUp') dy = -1;
+          if (e.key === 'ArrowRight') dx = step;
+          if (e.key === 'ArrowLeft') dx = -step;
+          if (e.key === 'ArrowDown') dy = step;
+          if (e.key === 'ArrowUp') dy = -step;
 
-          const radius = getNodeRadius(dx, dy);
-          const targetCenterDist = edgeToEdgeDist + 2 * radius;
-          
-          const finalDx = dx * targetCenterDist;
-          const finalDy = dy * targetCenterDist;
+          const currentEnd = conn.toId
+            ? (() => {
+                const target = getNode(conn.toId);
+                return target ? { x: target.x, y: target.y } : null;
+              })()
+            : (conn.tempToPos ?? { x: fromNode.x + lastDirection.x, y: fromNode.y + lastDirection.y });
 
-          const newX = fromNode.x + finalDx;
-          const newY = fromNode.y + finalDy;
-          setLastDirection({ x: finalDx, y: finalDy });
+          if (!currentEnd) return;
+
+          const newX = currentEnd.x + dx;
+          const newY = currentEnd.y + dy;
+          setLastDirection({ x: newX - fromNode.x, y: newY - fromNode.y });
 
           if (conn.toId) {
             const nextNodes = nodes.map(n => n.id === conn.toId ? { ...n, x: newX, y: newY } : n);
@@ -664,7 +881,14 @@ export default function App() {
     setIsPanning(false);
   };
 
+  useEffect(() => {
+    if (nodes.length < 2) return;
+
+    setNodes(prev => resolveNodeOverlaps(prev, draggingNode ?? undefined));
+  }, [nodes, draggingNode]);
+
   // Camera Tracking
+
   useEffect(() => {
     if (focused && inputRef.current) {
       inputRef.current.focus();
@@ -742,7 +966,11 @@ export default function App() {
     }
   }, [searchQuery]);
 
+
+
+
   return (
+
     <div 
       className="w-full h-screen bg-[#F8F9FA] overflow-hidden relative font-sans select-none"
       onMouseMove={handleMouseMove}
@@ -810,14 +1038,49 @@ export default function App() {
             const rawEndX = toNode ? toNode.x : (conn.tempToPos?.x ?? rawStartX + lastDirection.x);
             const rawEndY = toNode ? toNode.y : (conn.tempToPos?.y ?? rawStartY + lastDirection.y);
 
-            // Calculate edge points for both start and end to avoid occlusion
-            const startPoint = getEdgePoint({ x: rawEndX, y: rawEndY }, { x: rawStartX, y: rawStartY }, fromNode.id);
-            const endPoint = getEdgePoint({ x: rawStartX, y: rawStartY }, { x: rawEndX, y: rawEndY }, toNode?.id);
+            const curveOffsetRaw = conn.curveBend ?? 0;
+            const directionMultiplier = conn.toId && conn.fromId > conn.toId ? -1 : 1;
+            const curveOffset = curveOffsetRaw * directionMultiplier;
+
+            const centerDx = rawEndX - rawStartX;
+            const centerDy = rawEndY - rawStartY;
+            const centerLen = Math.hypot(centerDx, centerDy);
+            const normalX = centerLen === 0 ? 0 : -centerDy / centerLen;
+            const normalY = centerLen === 0 ? 0 : centerDx / centerLen;
+
+            const tangentLen = Math.max(26, centerLen * 0.22);
+            const c1CenterX = rawStartX + (centerLen === 0 ? 0 : (centerDx / centerLen) * tangentLen) + normalX * curveOffset;
+            const c1CenterY = rawStartY + (centerLen === 0 ? 0 : (centerDy / centerLen) * tangentLen) + normalY * curveOffset;
+            const c2CenterX = rawEndX - (centerLen === 0 ? 0 : (centerDx / centerLen) * tangentLen) + normalX * curveOffset;
+            const c2CenterY = rawEndY - (centerLen === 0 ? 0 : (centerDy / centerLen) * tangentLen) + normalY * curveOffset;
+
+            const startPoint = getEdgePoint(
+              { x: c1CenterX, y: c1CenterY },
+              { x: rawStartX, y: rawStartY },
+              fromNode.id,
+            );
+            const endPoint = toNode
+              ? getEdgePoint(
+                  { x: c2CenterX, y: c2CenterY },
+                  { x: rawEndX, y: rawEndY },
+                  toNode.id,
+                )
+              : { x: rawEndX, y: rawEndY };
 
             const startX = startPoint.x;
             const startY = startPoint.y;
             const endX = endPoint.x;
             const endY = endPoint.y;
+
+            const c1x = startX + (c1CenterX - rawStartX);
+            const c1y = startY + (c1CenterY - rawStartY);
+            const c2x = endX + (c2CenterX - rawEndX);
+            const c2y = endY + (c2CenterY - rawEndY);
+
+            const pathD = curveOffset === 0
+              ? `M ${startX} ${startY} L ${endX} ${endY}`
+              : `M ${startX} ${startY} C ${c1x} ${c1y} ${c2x} ${c2y} ${endX} ${endY}`;
+
 
             const isFocused = focused?.type === 'connection' && focused.id === conn.id;
             const color = isFocused ? '#3B82F6' : '#94A3B8';
@@ -825,11 +1088,18 @@ export default function App() {
 
             const textWidth = measureText(conn.text, '500 10px Inter, ui-sans-serif, system-ui, sans-serif');
             const labelWidth = Math.max(40, textWidth + 20);
+            const labelX = curveOffset === 0
+              ? (startX + endX) / 2
+              : 0.125 * startX + 0.375 * c1x + 0.375 * c2x + 0.125 * endX;
+            const labelY = curveOffset === 0
+              ? (startY + endY) / 2
+              : 0.125 * startY + 0.375 * c1y + 0.375 * c2y + 0.125 * endY;
+
 
             return (
               <g key={conn.id} className="pointer-events-auto cursor-pointer" onClick={(e) => { e.stopPropagation(); updateFocus({ type: 'connection', id: conn.id }); }}>
                 <path
-                  d={`M ${startX} ${startY} L ${endX} ${endY}`}
+                  d={pathD}
                   fill="none"
                   stroke={color}
                   strokeWidth={strokeWidth}
@@ -840,11 +1110,12 @@ export default function App() {
                 {/* Connection Label */}
                 {(conn.text || isFocused) && (
                   <foreignObject 
-                    x={(startX + endX) / 2 - labelWidth / 2} 
-                    y={(startY + endY) / 2 - 15} 
+                    x={labelX - labelWidth / 2} 
+                    y={labelY - 15} 
                     width={labelWidth} 
                     height="30"
                   >
+
                     <div className="flex items-center justify-center h-full relative">
                       {isFocused && (
                         <input
@@ -960,7 +1231,9 @@ export default function App() {
                     className={`px-4 py-2 text-sm cursor-pointer flex items-center justify-between ${idx === selectedIndex ? 'bg-blue-50 text-blue-600' : 'text-slate-600 hover:bg-slate-50'}`}
                     onClick={() => {
                       if (focused?.type === 'connection') {
-                        setConnections(prev => prev.map(c => c.id === focused.id ? { ...c, toId: node.id, tempToPos: undefined } : c));
+                        const pendingConn = getConnection(focused.id);
+                        const nextBend = pendingConn ? chooseBestCurveBend(pendingConn.fromId, node.id, pendingConn.id) : 0;
+                        setConnections(prev => prev.map(c => c.id === focused.id ? { ...c, toId: node.id, tempToPos: undefined, curveBend: nextBend } : c));
                         setSearchQuery(null);
                       }
                     }}
