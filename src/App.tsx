@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, ArrowRight, ArrowLeft, ArrowLeftRight, Minus, Trash2, MousePointer2 } from 'lucide-react';
+import { Search, ArrowRight, ArrowLeft, ArrowLeftRight, Minus, Trash2, MousePointer2, Download, Upload } from 'lucide-react';
 import { Node, Connection, ConnectionStyle, FocusedElement } from './types';
 
 const GRID_SIZE = 20;
@@ -39,7 +39,12 @@ const TRANSLATIONS = {
     untitledNode: '无标题节点',
     newNode: '新节点',
     style: '样式:',
-    tabToCycle: '按 Tab 键切换'
+    tabToCycle: '按 Tab 键切换',
+    export: '导出',
+    import: '加载',
+    exportSuccess: '导出成功',
+    importError: '文件格式错误',
+    emptyHint: '回车键开始创作',
   },
   en: {
     connLength: 'Conn Length',
@@ -57,7 +62,12 @@ const TRANSLATIONS = {
     untitledNode: 'Untitled Node',
     newNode: 'New Node',
     style: 'Style:',
-    tabToCycle: 'Press Tab to cycle'
+    tabToCycle: 'Press Tab to cycle',
+    export: 'Export',
+    import: 'Load',
+    exportSuccess: 'Exported',
+    importError: 'Invalid file format',
+    emptyHint: 'Press ENTER to create',
   }
 };
 
@@ -135,6 +145,9 @@ export default function App() {
 
   // No initialization effect needed as we initialize in useState
 
+  const isMac = useMemo(() => /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent), []);
+  const ctrlKey = isMac ? 'Cmd' : 'Ctrl';
+
   const t = useMemo(() => {
     const lang = navigator.language.startsWith('zh') ? 'zh' : 'en';
     return TRANSLATIONS[lang];
@@ -143,6 +156,53 @@ export default function App() {
   const canvasRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Export to JSON
+  const handleExport = useCallback(() => {
+    const data = {
+      version: 1,
+      nodes,
+      connections,
+      canvasOffset,
+      defaultOffset,
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `sysmind-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [nodes, connections, canvasOffset, defaultOffset]);
+
+  // Load from JSON
+  const handleImport = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target?.result as string);
+        if (!Array.isArray(data.nodes) || !Array.isArray(data.connections)) {
+          throw new Error('invalid');
+        }
+        const loadedNodes: Node[] = data.nodes;
+        const loadedConns: Connection[] = data.connections;
+        setNodes(loadedNodes);
+        setConnections(loadedConns);
+        setFocused(null);
+        if (typeof data.canvasOffset?.x === 'number') setCanvasOffset(data.canvasOffset);
+        if (typeof data.defaultOffset === 'number') setDefaultOffset(data.defaultOffset);
+        pushHistory(loadedNodes, loadedConns, null);
+      } catch {
+        alert(t.importError);
+      }
+    };
+    reader.readAsText(file);
+    // Reset so same file can be reloaded
+    e.target.value = '';
+  }, [t, pushHistory]);
 
   // Helper to get element by ID
   const getNode = (id: string) => nodes.find(n => n.id === id);
@@ -702,6 +762,23 @@ export default function App() {
         }}
       />
 
+      {/* Empty Canvas Hint */}
+      <AnimatePresence>
+        {nodes.length === 0 && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.4 }}
+            className="absolute inset-0 flex items-center justify-center pointer-events-none"
+          >
+            <span className="text-2xl font-medium text-slate-300 select-none tracking-wide">
+              {t.emptyHint}
+            </span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <motion.div 
         className="absolute inset-0"
         animate={{ x: canvasOffset.x, y: canvasOffset.y }}
@@ -908,15 +985,7 @@ export default function App() {
           <h1 className="text-xl font-bold text-slate-800 flex items-center gap-2">
             <MousePointer2 className="text-blue-500" /> SysMind
           </h1>
-          <div className="flex items-center gap-2 bg-white/80 backdrop-blur-sm border border-slate-200 px-3 py-1.5 rounded-xl shadow-sm">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{t.connLength}</span>
-            <input 
-              type="number" 
-              value={defaultOffset} 
-              onChange={(e) => setDefaultOffset(Number(e.target.value))}
-              className="w-16 bg-slate-50 border border-slate-200 rounded px-2 py-0.5 text-sm font-bold text-blue-600 outline-none focus:border-blue-400 transition-colors"
-            />
-          </div>
+
           <div className="flex items-center gap-1 bg-white/80 backdrop-blur-sm border border-slate-200 p-1 rounded-xl shadow-sm">
             <button 
               onClick={(e) => { e.stopPropagation(); undo(); }}
@@ -935,17 +1004,42 @@ export default function App() {
               <ArrowRight size={16} />
             </button>
           </div>
+          <div className="flex items-center gap-1 bg-white/80 backdrop-blur-sm border border-slate-200 p-1 rounded-xl shadow-sm">
+            <button
+              onClick={(e) => { e.stopPropagation(); handleExport(); }}
+              title={t.export}
+              className="flex items-center gap-1 px-2 py-1.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-600 text-xs font-medium"
+            >
+              <Download size={14} />
+              {t.export}
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}
+              title={t.import}
+              className="flex items-center gap-1 px-2 py-1.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-600 text-xs font-medium"
+            >
+              <Upload size={14} />
+              {t.import}
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".json,application/json"
+              className="hidden"
+              onChange={handleImport}
+            />
+          </div>
         </div>
         <div className="flex flex-wrap gap-2">
           <Kbd label="Enter" desc={t.enter} />
           <Kbd label="Space" desc={t.space} />
           <Kbd label="Tab" desc={t.tab} />
-          <Kbd label="Ctrl+Arrows" desc={t.ctrlArrows} />
+          <Kbd label={`${ctrlKey}+Arrows`} desc={t.ctrlArrows} />
           <Kbd label="/" desc={t.search} />
           <Kbd label="Arrows" desc={t.arrows} />
           <Kbd label="Del" desc={t.delete} />
-          <Kbd label="Ctrl+Z" desc={t.undo} />
-          <Kbd label="Ctrl+Y" desc={t.redo} />
+          <Kbd label={`${ctrlKey}+Z`} desc={t.undo} />
+          <Kbd label={`${ctrlKey}+Y`} desc={t.redo} />
         </div>
       </div>
 
