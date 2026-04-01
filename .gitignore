@@ -2,8 +2,10 @@ node_modules/
 build/
 dist/
 release*/
+itchio-release/
 coverage/
 .DS_Store
 *.log
 .env*
 !.env.example
+*.zip

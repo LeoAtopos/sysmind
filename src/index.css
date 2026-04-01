@@ -1,1 +1,12 @@
 @import "tailwindcss";
+
+/* Prevent browser gestures on the canvas */
+html, body {
+  overscroll-behavior: none;
+  touch-action: none;
+}
+
+/* Allow touch actions on inputs */
+input, textarea {
+  touch-action: auto;
+}

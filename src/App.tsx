@@ -437,11 +437,12 @@ export default function App() {
   }), [nodes, connections, canvasOffset, canvasScale, defaultOffset]);
 
   const applyImportedData = useCallback((data: any) => {
-    if (!Array.isArray(data.nodes) || !Array.isArray(data.connections)) {
+    // More lenient validation for itch.io compatibility
+    if (!data || typeof data !== 'object') {
       throw new Error('invalid');
     }
-    const loadedNodes: Node[] = data.nodes;
-    const loadedConns: Connection[] = data.connections;
+    const loadedNodes: Node[] = Array.isArray(data.nodes) ? data.nodes : [];
+    const loadedConns: Connection[] = Array.isArray(data.connections) ? data.connections : [];
     setNodes(loadedNodes);
     setConnections(loadedConns);
     setFocused(null);
@@ -480,12 +481,16 @@ export default function App() {
 
   const handleSaveToLoadedFile = useCallback(async (): Promise<boolean> => {
     try {
+      // Check if running in iframe (itch.io) - use download fallback
+      const isInIframe = window.self !== window.top;
+      if (isInIframe || !(window as any).showSaveFilePicker) {
+        // Fallback to download for itch.io
+        handleExport();
+        return true;
+      }
+
       let targetHandle = loadedFileHandle;
       if (!targetHandle) {
-        if (!(window as any).showSaveFilePicker) {
-          alert(t.saveUnavailable);
-          return false;
-        }
         const suggestedName = loadedFileMeta?.name || `sysmind-${new Date().toISOString().slice(0, 10)}.json`;
         targetHandle = await (window as any).showSaveFilePicker({
           suggestedName,
@@ -524,7 +529,7 @@ export default function App() {
       alert(`${t.saveFailed}${detail}`);
       return false;
     }
-  }, [loadedFileHandle, loadedFileMeta, exportData, t]);
+  }, [loadedFileHandle, loadedFileMeta, exportData, t, handleExport]);
 
   const handleNewCanvas = useCallback(async () => {
     const saved = await handleSaveToLoadedFile();
@@ -547,7 +552,9 @@ export default function App() {
 
   const handleImportFromPicker = useCallback(async () => {
     try {
-      if (!(window as any).showOpenFilePicker) {
+      // Check if running in iframe (itch.io) - fallback to file input
+      const isInIframe = window.self !== window.top;
+      if (isInIframe || !(window as any).showOpenFilePicker) {
         fileInputRef.current?.click();
         return;
       }
@@ -571,7 +578,8 @@ export default function App() {
       });
     } catch (err: any) {
       if (err?.name !== 'AbortError') {
-        alert(t.importError);
+        console.error('Import from picker error:', err);
+        alert(`${t.importError}${err?.message ? ': ' + err.message : ''}`);
       }
     }
   }, [applyImportedData, getBestEffortFilePath, t]);
@@ -585,7 +593,11 @@ export default function App() {
     const reader = new FileReader();
     reader.onload = (ev) => {
       try {
-        const data = JSON.parse(ev.target?.result as string);
+        const content = ev.target?.result as string;
+        if (!content || content.trim().length === 0) {
+          throw new Error('empty file');
+        }
+        const data = JSON.parse(content);
         applyImportedData(data);
         setLoadedFileHandle(null);
         setLoadedFileMeta({
@@ -593,9 +605,13 @@ export default function App() {
           path: getBestEffortFilePath(file, pickedPath),
           writable: false,
         });
-      } catch {
-        alert(t.importError);
+      } catch (err: any) {
+        console.error('Import error:', err);
+        alert(`${t.importError}${err?.message ? ': ' + err.message : ''}`);
       }
+    };
+    reader.onerror = () => {
+      alert(t.importError + ': Failed to read file');
     };
     reader.readAsText(file);
     // Reset so same file can be reloaded
@@ -1674,6 +1690,49 @@ export default function App() {
 
   };
 
+  // Handle wheel events: mouse wheel zoom, touchpad two-finger pan and pinch zoom
+  const handleWheel = (e: React.WheelEvent) => {
+    // Prevent default browser gestures (pinch-zoom, back/forward navigation)
+    e.preventDefault();
+
+    const isPinchZoom = e.ctrlKey; // macOS touchpad pinch sets ctrlKey
+    const hasDeltaY = Math.abs(e.deltaY) > 0.01;
+    const hasDeltaX = Math.abs(e.deltaX) > 0.01;
+
+    if (isPinchZoom && hasDeltaY) {
+      // Touchpad pinch zoom (macOS sends ctrlKey + deltaY)
+      const delta = -e.deltaY;
+      const zoomFactor = delta > 0 ? 1 + ZOOM_STEP : 1 - ZOOM_STEP;
+
+      setCanvasView(prev => {
+        const nextScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, Number((prev.scale * zoomFactor).toFixed(2))));
+        if (nextScale === prev.scale) return prev;
+
+        // Zoom towards pointer position
+        const rect = canvasRef.current?.getBoundingClientRect();
+        const pointerX = rect ? e.clientX - rect.left : e.clientX;
+        const pointerY = rect ? e.clientY - rect.top : e.clientY;
+
+        const worldX = (pointerX - prev.x) / prev.scale;
+        const worldY = (pointerY - prev.y) / prev.scale;
+
+        return {
+          x: pointerX - worldX * nextScale,
+          y: pointerY - worldY * nextScale,
+          scale: nextScale,
+        };
+      });
+    } else if (!isPinchZoom && (hasDeltaX || hasDeltaY)) {
+      // Touchpad two-finger pan (deltaX and/or deltaY without ctrlKey)
+      // Also handles mouse wheel with shift for horizontal scroll
+      setCanvasView(prev => ({
+        ...prev,
+        x: prev.x - e.deltaX,
+        y: prev.y - e.deltaY,
+      }));
+    }
+  };
+
   const handleMouseMove = (e: React.MouseEvent) => {
     if (draggingCurveControl) {
       const world = getWorldPointFromClient(e.clientX, e.clientY);
@@ -2000,12 +2059,13 @@ export default function App() {
 
   return (
 
-    <div 
+    <div
       className="w-full h-screen bg-[#F8F9FA] overflow-hidden relative font-sans select-none"
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={() => setHoveredEndpoint(null)}
       onMouseDown={handleCanvasMouseDown}
+      onWheel={handleWheel}
       onContextMenu={(e) => e.preventDefault()}
     >
       {/* Grid Pattern */}
