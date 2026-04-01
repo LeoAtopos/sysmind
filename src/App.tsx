@@ -5,9 +5,9 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, ArrowRight, ArrowLeft, ArrowLeftRight, Minus, Trash2, MousePointer2, Download, Upload, Save, FilePlus2, ChevronDown, ChevronUp } from 'lucide-react';
+import { Search, ArrowRight, ArrowLeft, ArrowLeftRight, Minus, Trash2, MousePointer2, Download, Upload, Save, FilePlus2, ChevronDown, ChevronUp, Settings } from 'lucide-react';
 
-import { Node, Connection, ConnectionStyle, FocusedElement } from './types';
+import { Node, Connection, ConnectionStyle, NodeStyle, FocusedElement, KeyboardShortcuts, DEFAULT_SHORTCUTS } from './types';
 
 const GRID_SIZE = 20;
 const NODE_WIDTH = 120;
@@ -186,6 +186,7 @@ const TRANSLATIONS = {
     enterConnection: '完成连线/新建目标节点',
     space: '编辑文字',
     tab: '切换样式',
+    tabNode: '切换节点样式',
     ctrlArrowsNode: '移动节点',
     ctrlArrowsConnection: '移动末端',
     zoom: '缩放',
@@ -222,7 +223,37 @@ const TRANSLATIONS = {
     hideShortcuts: '收起',
 
     emptyHint: '回车键开始创作',
+    settings: '设置',
+    shortcutsSettings: '快捷键设置',
+    shortcutAction: '操作',
+    shortcutKey: '快捷键',
+    clickToRecord: '点击录制',
+    recording: '录制中...',
+    pressAnyKey: '按下任意键组合',
+    resetToDefaults: '恢复默认',
+    cancel: '取消',
+    shortcutConflict: '快捷键冲突',
+    shortcutConflictDesc: '此快捷键已被其他操作使用',
 
+    // Action names for shortcuts
+    actionCreateNode: '新建节点',
+    actionCreateConnection: '从节点新建连线',
+    actionCreateNodeBelow: '下方新建节点',
+    actionReturnConnection: '返回连线',
+    actionEditText: '编辑文字',
+    actionDelete: '删除',
+    actionUndo: '撤销',
+    actionRedo: '还原',
+    actionZoomIn: '放大',
+    actionZoomOut: '缩小',
+    actionZoomReset: '重置缩放',
+    actionMoveUp: '向上移动',
+    actionMoveDown: '向下移动',
+    actionMoveLeft: '向左移动',
+    actionMoveRight: '向右移动',
+    actionCycleStyle: '切换样式',
+    actionSearch: '搜索链接',
+    actionOpenShortcuts: '打开快捷键设置',
 
   },
   en: {
@@ -236,6 +267,7 @@ const TRANSLATIONS = {
     enterConnection: 'Complete Link / Create Target Node',
     space: 'Edit Text',
     tab: 'Cycle Style',
+    tabNode: 'Cycle Node Style',
     ctrlArrowsNode: 'Move Node',
     ctrlArrowsConnection: 'Move End',
     zoom: 'Zoom',
@@ -272,8 +304,56 @@ const TRANSLATIONS = {
     hideShortcuts: 'Collapse',
 
     emptyHint: 'Press ENTER to create',
+    settings: 'Settings',
+    shortcutsSettings: 'Keyboard Shortcuts',
+    shortcutAction: 'Action',
+    shortcutKey: 'Shortcut',
+    clickToRecord: 'Click to record',
+    recording: 'Recording...',
+    pressAnyKey: 'Press any key combination',
+    resetToDefaults: 'Reset to Defaults',
+    cancel: 'Cancel',
+    shortcutConflict: 'Shortcut Conflict',
+    shortcutConflictDesc: 'This shortcut is already used by another action',
+
+    // Action names for shortcuts
+    actionCreateNode: 'Create Node',
+    actionCreateConnection: 'Create Connection from Node',
+    actionCreateNodeBelow: 'Create Node Below',
+    actionReturnConnection: 'Return Connection',
+    actionEditText: 'Edit Text',
+    actionDelete: 'Delete',
+    actionUndo: 'Undo',
+    actionRedo: 'Redo',
+    actionZoomIn: 'Zoom In',
+    actionZoomOut: 'Zoom Out',
+    actionZoomReset: 'Reset Zoom',
+    actionMoveUp: 'Move Up',
+    actionMoveDown: 'Move Down',
+    actionMoveLeft: 'Move Left',
+    actionMoveRight: 'Move Right',
+    actionCycleStyle: 'Cycle Style',
+    actionSearch: 'Search Link',
+    actionOpenShortcuts: 'Open Shortcuts Settings',
   }
 };
+
+// Helper function to format shortcut for display
+function formatShortcutLabel(config: { key: string; ctrl?: boolean; shift?: boolean; alt?: boolean; meta?: boolean }, ctrlKey: string): string {
+  const parts: string[] = [];
+  if (config.ctrl) parts.push(ctrlKey);
+  if (config.meta && ctrlKey !== 'Cmd') parts.push('Cmd');
+  if (config.alt) parts.push('Alt');
+  if (config.shift) parts.push('Shift');
+  if (config.key === ' ') {
+    parts.push('Space');
+  } else if (config.key.startsWith('Arrow')) {
+    parts.push(config.key.replace('Arrow', ''));
+  } else {
+    parts.push(config.key);
+  }
+  return parts.join('+');
+}
 
 export default function App() {
   const [nodes, setNodes] = useState<Node[]>([]);
@@ -295,6 +375,8 @@ export default function App() {
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [selectedConnectionIds, setSelectedConnectionIds] = useState<string[]>([]);
   const [selectionBox, setSelectionBox] = useState<{ start: { x: number; y: number }; current: { x: number; y: number } } | null>(null);
+  const [shortcuts, setShortcuts] = useState<KeyboardShortcuts>(DEFAULT_SHORTCUTS);
+  const [isShortcutsModalOpen, setIsShortcutsModalOpen] = useState(false);
 
 
 
@@ -386,6 +468,9 @@ export default function App() {
   const skipAutoFocusOnceRef = useRef(false);
   const skipFocusHistorySyncOnceRef = useRef(false);
 
+  // Native wheel event handler ref to allow adding/removing non-passive listener
+  const wheelHandlerRef = useRef<((e: WheelEvent) => void) | null>(null);
+
 
   const isSameFocus = (a: FocusedElement, b: FocusedElement) => a?.type === b?.type && a?.id === b?.id;
 
@@ -436,7 +521,8 @@ export default function App() {
     canvasOffset,
     canvasScale,
     defaultOffset,
-  }), [nodes, connections, canvasOffset, canvasScale, defaultOffset]);
+    shortcuts,
+  }), [nodes, connections, canvasOffset, canvasScale, defaultOffset, shortcuts]);
 
   const applyImportedData = useCallback((data: any) => {
     // More lenient validation for itch.io compatibility
@@ -456,6 +542,10 @@ export default function App() {
         : prev.scale,
     }));
     if (typeof data.defaultOffset === 'number') setDefaultOffset(data.defaultOffset);
+    // Load shortcuts if present, otherwise keep defaults
+    if (data.shortcuts && typeof data.shortcuts === 'object') {
+      setShortcuts(prev => ({ ...prev, ...data.shortcuts }));
+    }
     pushHistory(loadedNodes, loadedConns, null);
   }, [pushHistory]);
 
@@ -948,6 +1038,15 @@ export default function App() {
     return newConn;
   };
 
+  // Helper to check if a keyboard event matches a shortcut config
+  const matchesShortcut = useCallback((e: KeyboardEvent, config: { key: string; ctrl?: boolean; shift?: boolean; alt?: boolean; meta?: boolean }) => {
+    const keyMatch = e.key === config.key || e.code === config.key;
+    const ctrlMatch = !!(e.ctrlKey || e.metaKey) === !!(config.ctrl || config.meta);
+    const shiftMatch = e.shiftKey === !!config.shift;
+    const altMatch = e.altKey === !!config.alt;
+    return keyMatch && ctrlMatch && shiftMatch && altMatch;
+  }, []);
+
   // Keyboard Handlers
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -965,60 +1064,60 @@ export default function App() {
         return;
       }
 
-      // Global Shortcuts
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+      // Open shortcuts modal
+      if (matchesShortcut(e, shortcuts.openShortcuts)) {
         e.preventDefault();
-        if (e.shiftKey) {
-          redo();
-        } else {
-          undo();
-        }
+        setIsShortcutsModalOpen(true);
         return;
       }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+
+      // Global Shortcuts - Undo/Redo
+      if (matchesShortcut(e, shortcuts.undo)) {
+        e.preventDefault();
+        undo();
+        return;
+      }
+      if (matchesShortcut(e, shortcuts.redo)) {
         e.preventDefault();
         redo();
         return;
       }
 
-      if (e.ctrlKey || e.metaKey) {
-        const isZoomIn = e.key === '=' || e.key === '+' || e.code === 'NumpadAdd';
-        const isZoomOut = e.key === '-' || e.key === '_' || e.code === 'NumpadSubtract';
-        const isZoomReset = e.key === '0' || e.code === 'Numpad0';
+      // Zoom shortcuts
+      if (matchesShortcut(e, shortcuts.zoomIn) || matchesShortcut(e, shortcuts.zoomOut) || matchesShortcut(e, shortcuts.zoomReset)) {
+        e.preventDefault();
+        const isZoomIn = matchesShortcut(e, shortcuts.zoomIn);
+        const isZoomReset = matchesShortcut(e, shortcuts.zoomReset);
+        setCanvasView(prev => {
+          const rawNext = isZoomReset ? 1 : (isZoomIn ? prev.scale + ZOOM_STEP : prev.scale - ZOOM_STEP);
+          const nextScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, Number(rawNext.toFixed(2))));
+          if (nextScale === prev.scale) return prev;
 
-        if (isZoomIn || isZoomOut || isZoomReset) {
-          e.preventDefault();
-          setCanvasView(prev => {
-            const rawNext = isZoomReset ? 1 : (isZoomIn ? prev.scale + ZOOM_STEP : prev.scale - ZOOM_STEP);
-            const nextScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, Number(rawNext.toFixed(2))));
-            if (nextScale === prev.scale) return prev;
+          const anchorX = window.innerWidth / 2;
+          const anchorY = window.innerHeight / 2;
+          const worldX = (anchorX - prev.x) / prev.scale;
+          const worldY = (anchorY - prev.y) / prev.scale;
 
-            const anchorX = window.innerWidth / 2;
-            const anchorY = window.innerHeight / 2;
-            const worldX = (anchorX - prev.x) / prev.scale;
-            const worldY = (anchorY - prev.y) / prev.scale;
-
-            return {
-              x: anchorX - worldX * nextScale,
-              y: anchorY - worldY * nextScale,
-              scale: nextScale,
-            };
-          });
-          return;
-        }
+          return {
+            x: anchorX - worldX * nextScale,
+            y: anchorY - worldY * nextScale,
+            scale: nextScale,
+          };
+        });
+        return;
       }
 
       // If an input is already focused (pre-focused), let characters pass through to start IME
       if (e.target === inputRef.current && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
         // Space is used as edit shortcut and should not be inserted as content on first press
-        if (e.key === ' ') {
+        if (matchesShortcut(e, shortcuts.editText)) {
           e.preventDefault();
           setShouldSelect(true);
           setIsEditing(true);
           return;
         }
-        // Special case: if it's '/' on a connection, we want the search shortcut instead of typing
-        if (focused?.type === 'connection' && e.key === '/') {
+        // Special case: if it's search key on a connection, we want the search shortcut instead of typing
+        if (focused?.type === 'connection' && matchesShortcut(e, shortcuts.search)) {
           // Fall through to the specific handler below
         } else {
           setIsEditing(true);
@@ -1032,12 +1131,12 @@ export default function App() {
           setSearchQuery(null);
           return;
         }
-        if (e.key === 'ArrowDown') {
+        if (matchesShortcut(e, shortcuts.moveDown)) {
           e.preventDefault();
           setSelectedIndex(prev => (prev + 1) % searchResults.length);
           return;
         }
-        if (e.key === 'ArrowUp') {
+        if (matchesShortcut(e, shortcuts.moveUp)) {
           e.preventDefault();
           setSelectedIndex(prev => (prev - 1 + searchResults.length) % searchResults.length);
           return;
@@ -1048,7 +1147,7 @@ export default function App() {
           if (target && focused?.type === 'connection') {
             const pendingConn = getConnection(focused.id);
             const nextBend = pendingConn ? chooseBestCurveBend(pendingConn.fromId, target.id, pendingConn.id) : 0;
-            const nextConns = connections.map(c => 
+            const nextConns = connections.map(c =>
               c.id === focused.id ? { ...c, toId: target.id, tempToPos: undefined, curveBend: nextBend, curveBendRatio: undefined } : c
 
             );
@@ -1062,7 +1161,7 @@ export default function App() {
       }
 
       const selectedTotal = selectedNodeIds.length + selectedConnectionIds.length;
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedTotal > 1) {
+      if (matchesShortcut(e, shortcuts.delete) && selectedTotal > 1) {
         e.preventDefault();
         const nodeDeleteSet = new Set(selectedNodeIds);
         const connDeleteSet = new Set(selectedConnectionIds);
@@ -1116,7 +1215,7 @@ export default function App() {
       // Global Canvas Actions
 
       if (!focused) {
-        if (e.key === 'Enter') {
+        if (matchesShortcut(e, shortcuts.createNode)) {
           e.preventDefault();
           const newNode = createNode(-canvasOffset.x + window.innerWidth / 2, -canvasOffset.y + window.innerHeight / 2);
           const nextFocused = { type: 'node', id: newNode.id };
@@ -1124,6 +1223,30 @@ export default function App() {
           setShouldSelect(true);
           setIsEditing(true);
           pushHistory([...nodes, newNode], connections, nextFocused);
+        } else if (matchesShortcut(e, shortcuts.moveUp) || matchesShortcut(e, shortcuts.moveDown) || matchesShortcut(e, shortcuts.moveLeft) || matchesShortcut(e, shortcuts.moveRight)) {
+          // When no focus, arrow keys move focus to the node closest to the center of the viewport
+          e.preventDefault();
+          if (nodes.length === 0) return;
+
+          // Calculate the center of the current viewport in world coordinates
+          const viewportCenterX = -canvasOffset.x + window.innerWidth / 2;
+          const viewportCenterY = -canvasOffset.y + window.innerHeight / 2;
+
+          // Find the node closest to the viewport center
+          let closestNode = nodes[0];
+          let minDistance = Infinity;
+
+          for (const node of nodes) {
+            const distance = Math.hypot(node.x - viewportCenterX, node.y - viewportCenterY);
+            if (distance < minDistance) {
+              minDistance = distance;
+              closestNode = node;
+            }
+          }
+
+          const nextFocused = { type: 'node', id: closestNode.id };
+          setFocused(nextFocused);
+          pushHistory(nodes, connections, nextFocused);
         }
         return;
       }
@@ -1133,11 +1256,11 @@ export default function App() {
         const node = getNode(focused.id);
         if (!node) return;
 
-        if (e.key === ' ') {
+        if (matchesShortcut(e, shortcuts.editText)) {
           e.preventDefault();
           setShouldSelect(true);
           setIsEditing(true);
-        } else if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        } else if (matchesShortcut(e, shortcuts.returnConnection)) {
           e.preventDefault();
           const previousNodeId = nodeSourceRef.current[node.id] ?? previousNodeFocusRef.current;
 
@@ -1152,7 +1275,7 @@ export default function App() {
             setFocused(nextFocused);
             pushHistory(nodes, [...connections, newConn], nextFocused);
           }
-        } else if (e.shiftKey && e.key === 'Enter') {
+        } else if (matchesShortcut(e, shortcuts.createNodeBelow)) {
           // Shift+Enter: Create a new node below the current node and enter editing mode
           e.preventDefault();
           const newNodeY = node.y + NODE_HEIGHT + 60; // Place below with some distance
@@ -1162,7 +1285,7 @@ export default function App() {
           setShouldSelect(true);
           setIsEditing(true);
           pushHistory([...nodes, newNode], connections, nextFocused);
-        } else if (e.key === 'Enter') {
+        } else if (matchesShortcut(e, shortcuts.createConnection)) {
           e.preventDefault();
           const newConn = createConnection(node.id, null, { x: node.x + lastDirection.x, y: node.y + lastDirection.y });
           const nextFocused = { type: 'connection', id: newConn.id };
@@ -1171,9 +1294,16 @@ export default function App() {
         } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
           // Just trigger editing mode, browser handles the character
           setIsEditing(true);
-        } else if (e.key === 'Tab') {
+        } else if (matchesShortcut(e, shortcuts.cycleStyle)) {
           e.preventDefault();
-        } else if (e.key === 'Delete' || e.key === 'Backspace') {
+          // Cycle through node styles: default -> text -> note -> warning -> default
+          const styles: NodeStyle[] = ['default', 'text', 'note', 'warning'];
+          const currentStyle = node.style || 'default';
+          const nextStyle = styles[(styles.indexOf(currentStyle) + 1) % styles.length];
+          const nextNodes = nodes.map(n => n.id === node.id ? { ...n, style: nextStyle } : n);
+          setNodes(nextNodes);
+          pushHistory(nextNodes, connections, focused);
+        } else if (matchesShortcut(e, shortcuts.delete)) {
           const deletedPos = { x: node.x, y: node.y };
           const newNodes = nodes.filter(n => n.id !== node.id);
           const newConns = connections
@@ -1223,9 +1353,8 @@ export default function App() {
           setConnections(newConns);
           setFocused(fallbackFocus);
           pushHistory(newNodes, newConns, fallbackFocus);
-        } else if ((e.ctrlKey || e.metaKey) && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
-
-
+        } else if ((e.ctrlKey || e.metaKey) && (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+          // Ctrl/Cmd + Arrow keys: Move node
           e.preventDefault();
           const step = 20;
           let dx = 0;
@@ -1235,9 +1364,12 @@ export default function App() {
           if (e.key === 'ArrowDown') dy = step;
           if (e.key === 'ArrowUp') dy = -step;
           setNodes(prev => prev.map(n => n.id === node.id ? { ...n, x: n.x + dx, y: n.y + dy } : n));
-        } else if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+        } else if (matchesShortcut(e, shortcuts.moveUp) || matchesShortcut(e, shortcuts.moveDown) || matchesShortcut(e, shortcuts.moveLeft) || matchesShortcut(e, shortcuts.moveRight)) {
           e.preventDefault();
-          moveFocus(e.key);
+          if (matchesShortcut(e, shortcuts.moveUp)) moveFocus('ArrowUp');
+          else if (matchesShortcut(e, shortcuts.moveDown)) moveFocus('ArrowDown');
+          else if (matchesShortcut(e, shortcuts.moveLeft)) moveFocus('ArrowLeft');
+          else if (matchesShortcut(e, shortcuts.moveRight)) moveFocus('ArrowRight');
         }
       }
 
@@ -1246,7 +1378,7 @@ export default function App() {
         const conn = getConnection(focused.id);
         if (!conn) return;
 
-        if (e.key === 'Tab') {
+        if (matchesShortcut(e, shortcuts.cycleStyle)) {
           e.preventDefault();
           const styles: ConnectionStyle[] = ['forward', 'backward', 'both', 'none'];
           const nextStyle = styles[(styles.indexOf(conn.style) + 1) % styles.length];
@@ -1254,11 +1386,11 @@ export default function App() {
           setConnections(nextConns);
           pushHistory(nodes, nextConns, focused);
           setLastStyle(nextStyle);
-        } else if (e.key === ' ') {
+        } else if (matchesShortcut(e, shortcuts.editText)) {
           e.preventDefault();
           setShouldSelect(true);
           setIsEditing(true);
-        } else if (e.key === 'Enter') {
+        } else if (matchesShortcut(e, shortcuts.createNode)) {
           e.preventDefault();
           if (!conn.toId) {
             const fromNode = getNode(conn.fromId);
@@ -1280,10 +1412,10 @@ export default function App() {
             // If already connected, maybe move focus to the target node
             updateFocus({ type: 'node', id: conn.toId });
           }
-        } else if (e.key === '/') {
+        } else if (matchesShortcut(e, shortcuts.search)) {
           e.preventDefault();
           setSearchQuery('');
-        } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        } else if (matchesShortcut(e, shortcuts.delete)) {
           const newConns = connections.filter(c => c.id !== conn.id);
           const connFocusPoint = getConnectionFocusPoint(conn) ?? { x: 0, y: 0 };
           const fallbackFocus = resolveDeleteFallbackFocus(nodes, newConns, connFocusPoint);
@@ -1300,7 +1432,8 @@ export default function App() {
 
           // Just trigger editing mode, browser handles the character
           setIsEditing(true);
-        } else if ((e.ctrlKey || e.metaKey) && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+        } else if ((e.ctrlKey || e.metaKey) && (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+          // Ctrl/Cmd + Arrow keys: Move connection endpoint
           e.preventDefault();
           const fromNode = getNode(conn.fromId);
           if (!fromNode) return;
@@ -1335,16 +1468,19 @@ export default function App() {
             setConnections(nextConns);
             pushHistory(nodes, nextConns, focused);
           }
-        } else if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+        } else if (matchesShortcut(e, shortcuts.moveUp) || matchesShortcut(e, shortcuts.moveDown) || matchesShortcut(e, shortcuts.moveLeft) || matchesShortcut(e, shortcuts.moveRight)) {
           e.preventDefault();
-          moveFocus(e.key);
+          if (matchesShortcut(e, shortcuts.moveUp)) moveFocus('ArrowUp');
+          else if (matchesShortcut(e, shortcuts.moveDown)) moveFocus('ArrowDown');
+          else if (matchesShortcut(e, shortcuts.moveLeft)) moveFocus('ArrowLeft');
+          else if (matchesShortcut(e, shortcuts.moveRight)) moveFocus('ArrowRight');
         }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (((e.ctrlKey || e.metaKey) || ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) && focused?.type === 'node' && !isEditing) {
+      if (((e.ctrlKey || e.metaKey) || matchesShortcut(e, shortcuts.moveUp) || matchesShortcut(e, shortcuts.moveDown) || matchesShortcut(e, shortcuts.moveLeft) || matchesShortcut(e, shortcuts.moveRight)) && focused?.type === 'node' && !isEditing) {
         pushHistory(nodes, connections, focused);
       }
     };
@@ -1353,7 +1489,7 @@ export default function App() {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [focused, isEditing, nodes, connections, canvasOffset, searchQuery, searchResults, selectedIndex, lastStyle, defaultOffset, selectedNodeIds, selectedConnectionIds]);
+  }, [focused, isEditing, nodes, connections, canvasOffset, searchQuery, searchResults, selectedIndex, lastStyle, defaultOffset, selectedNodeIds, selectedConnectionIds, shortcuts, matchesShortcut]);
 
   // Spatial Navigation
   const moveFocus = (key: string) => {
@@ -1702,17 +1838,18 @@ export default function App() {
   };
 
   // Handle wheel events: mouse wheel zoom, touchpad two-finger pan and pinch zoom
-  const handleWheel = (e: React.WheelEvent) => {
+  const handleWheel = useCallback((e: React.WheelEvent | WheelEvent) => {
     // Prevent default browser gestures (pinch-zoom, back/forward navigation)
     e.preventDefault();
 
-    const isPinchZoom = e.ctrlKey; // macOS touchpad pinch sets ctrlKey
-    const hasDeltaY = Math.abs(e.deltaY) > 0.01;
-    const hasDeltaX = Math.abs(e.deltaX) > 0.01;
+    const wheelEvent = e as WheelEvent;
+    const isPinchZoom = wheelEvent.ctrlKey; // macOS touchpad pinch sets ctrlKey
+    const hasDeltaY = Math.abs(wheelEvent.deltaY) > 0.01;
+    const hasDeltaX = Math.abs(wheelEvent.deltaX) > 0.01;
 
     if (isPinchZoom && hasDeltaY) {
       // Touchpad pinch zoom (macOS sends ctrlKey + deltaY)
-      const delta = -e.deltaY;
+      const delta = -wheelEvent.deltaY;
       const zoomFactor = delta > 0 ? 1 + ZOOM_STEP : 1 - ZOOM_STEP;
 
       setCanvasView(prev => {
@@ -1721,8 +1858,8 @@ export default function App() {
 
         // Zoom towards pointer position
         const rect = canvasRef.current?.getBoundingClientRect();
-        const pointerX = rect ? e.clientX - rect.left : e.clientX;
-        const pointerY = rect ? e.clientY - rect.top : e.clientY;
+        const pointerX = rect ? wheelEvent.clientX - rect.left : wheelEvent.clientX;
+        const pointerY = rect ? wheelEvent.clientY - rect.top : wheelEvent.clientY;
 
         const worldX = (pointerX - prev.x) / prev.scale;
         const worldY = (pointerY - prev.y) / prev.scale;
@@ -1738,11 +1875,11 @@ export default function App() {
       // Also handles mouse wheel with shift for horizontal scroll
       setCanvasView(prev => ({
         ...prev,
-        x: prev.x - e.deltaX,
-        y: prev.y - e.deltaY,
+        x: prev.x - wheelEvent.deltaX,
+        y: prev.y - wheelEvent.deltaY,
       }));
     }
-  };
+  }, []);
 
   const handleMouseMove = (e: React.MouseEvent) => {
     if (draggingCurveControl) {
@@ -2065,6 +2202,24 @@ export default function App() {
     }
   }, [searchQuery]);
 
+  // Bind native non-passive wheel event listener to prevent default browser gestures
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    // Store handler in ref so we can remove it later
+    wheelHandlerRef.current = (e: WheelEvent) => {
+      handleWheel(e);
+    };
+
+    canvas.addEventListener('wheel', wheelHandlerRef.current, { passive: false });
+
+    return () => {
+      if (wheelHandlerRef.current) {
+        canvas.removeEventListener('wheel', wheelHandlerRef.current);
+      }
+    };
+  }, [handleWheel]);
 
 
 
@@ -2076,7 +2231,6 @@ export default function App() {
       onMouseUp={handleMouseUp}
       onMouseLeave={() => setHoveredEndpoint(null)}
       onMouseDown={handleCanvasMouseDown}
-      onWheel={handleWheel}
       onContextMenu={(e) => e.preventDefault()}
     >
       {/* Grid Pattern */}
@@ -2386,6 +2540,63 @@ export default function App() {
           const isFocused = focused?.type === 'node' && focused.id === node.id;
           const isSelected = selectedNodeIds.includes(node.id);
           const nodeBox = getNodeBoxSize(node.text);
+          const nodeStyle = node.style || 'default';
+
+          // Define styles for different node types
+          const getNodeStyleClasses = (style: NodeStyle, focused: boolean, selected: boolean) => {
+            if (focused) {
+              switch (style) {
+                case 'text':
+                  return 'bg-transparent border-transparent shadow-none';
+                case 'note':
+                  return 'bg-yellow-100 border-yellow-400 shadow-lg z-20';
+                case 'warning':
+                  return 'bg-white border-red-500 shadow-lg z-20 ring-2 ring-red-200';
+                case 'default':
+                default:
+                  return 'bg-blue-50 border-blue-500 shadow-lg z-20';
+              }
+            }
+            if (selected) {
+              switch (style) {
+                case 'text':
+                  return 'bg-transparent border-blue-300/50 shadow-none z-[15]';
+                case 'note':
+                  return 'bg-yellow-50/80 border-yellow-300 shadow-md z-[15]';
+                case 'warning':
+                  return 'bg-red-50/60 border-red-300 shadow-md z-[15]';
+                case 'default':
+                default:
+                  return 'bg-blue-50/60 border-blue-300 shadow-md z-[15]';
+              }
+            }
+            // Unfocused, unselected
+            switch (style) {
+              case 'text':
+                return 'bg-transparent border-transparent shadow-none hover:bg-slate-50/50';
+              case 'note':
+                return 'bg-yellow-50 border-yellow-200 shadow-sm hover:border-yellow-300';
+              case 'warning':
+                return 'bg-white border-red-400 shadow-sm hover:border-red-500';
+              case 'default':
+              default:
+                return 'bg-white border-slate-200 shadow-sm hover:border-slate-300';
+            }
+          };
+
+          const getTextClasses = (style: NodeStyle) => {
+            switch (style) {
+              case 'text':
+                return 'text-slate-700';
+              case 'note':
+                return 'text-yellow-900';
+              case 'warning':
+                return 'text-red-600 font-semibold';
+              case 'default':
+              default:
+                return 'text-slate-700';
+            }
+          };
 
           const nodeLines = nodeBox.lines;
           const textAlignClass = nodeLines.length > 1 ? 'text-left' : 'text-center';
@@ -2405,13 +2616,8 @@ export default function App() {
               }}
               onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
               style={{ width: nodeBox.width, height: nodeBox.height }}
-              className={`absolute flex items-center justify-center rounded-xl border-2 transition-colors duration-200 cursor-grab active:cursor-grabbing
-                ${isFocused
-                  ? 'bg-blue-50 border-blue-500 shadow-lg z-20'
-                  : isSelected
-                    ? 'bg-blue-50/60 border-blue-300 shadow-md z-[15]'
-                    : 'bg-white border-slate-200 shadow-sm hover:border-slate-300 z-10'
-                }`}
+              className={`absolute flex items-center justify-center rounded-xl border-2 transition-colors duration-200 cursor-grab active:cursor-grabbing z-10
+                ${getNodeStyleClasses(nodeStyle, isFocused, isSelected)}`}
 
             >
               {isFocused && (
@@ -2435,7 +2641,7 @@ export default function App() {
                 />
               )}
               {!(isFocused && isEditing) && (
-                <span className={`text-sm font-medium text-slate-700 whitespace-pre-wrap break-words px-2 relative z-0 w-full ${textAlignClass}`}>
+                <span className={`text-sm font-medium whitespace-pre-wrap break-words px-2 relative z-0 w-full ${textAlignClass} ${getTextClasses(nodeStyle)}`}>
                   {node.text || <span className="text-slate-300 italic">{t.newNode}</span>}
                 </span>
               )}
@@ -2639,6 +2845,14 @@ export default function App() {
               <Save size={14} />
               {t.save}
             </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); setIsShortcutsModalOpen(true); }}
+              title={t.settings}
+              className="flex items-center gap-1 px-2 py-1.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-600 text-xs font-medium"
+            >
+              <Settings size={14} />
+              {t.settings}
+            </button>
             <input
               ref={fileInputRef}
               type="file"
@@ -2666,29 +2880,30 @@ export default function App() {
           {isShortcutsExpanded && (
             <div className="mt-2 flex flex-col gap-2">
               <ShortcutGroup title={t.globalActions}>
-                <Kbd label="Enter" desc={t.enterGlobal} />
+                <Kbd label={formatShortcutLabel(shortcuts.createNode, ctrlKey)} desc={t.enterGlobal} />
                 <Kbd label={`${ctrlKey}+ +/-`} desc={t.zoom} />
-                <Kbd label={`${ctrlKey}+0`} desc={t.zoomReset} />
+                <Kbd label={formatShortcutLabel(shortcuts.zoomReset, ctrlKey)} desc={t.zoomReset} />
                 <Kbd label="Arrows" desc={t.arrows} />
-                <Kbd label={`${ctrlKey}+Z`} desc={t.undo} />
-                <Kbd label={`${ctrlKey}+Y`} desc={t.redo} />
+                <Kbd label={formatShortcutLabel(shortcuts.undo, ctrlKey)} desc={t.undo} />
+                <Kbd label={formatShortcutLabel(shortcuts.redo, ctrlKey)} desc={t.redo} />
               </ShortcutGroup>
 
               <ShortcutGroup title={t.nodeActions}>
-                <Kbd label="Space" desc={t.space} />
-                <Kbd label="Enter" desc={t.enterNode} />
-                <Kbd label="Shift+Enter" desc={t.shiftEnterNode} />
+                <Kbd label={formatShortcutLabel(shortcuts.editText, ctrlKey)} desc={t.space} />
+                <Kbd label={formatShortcutLabel(shortcuts.createConnection, ctrlKey)} desc={t.enterNode} />
+                <Kbd label={formatShortcutLabel(shortcuts.createNodeBelow, ctrlKey)} desc={t.shiftEnterNode} />
+                <Kbd label={formatShortcutLabel(shortcuts.cycleStyle, ctrlKey)} desc={t.tabNode} />
                 <Kbd label={`${ctrlKey}+Arrows`} desc={t.ctrlArrowsNode} />
-                <Kbd label="Del" desc={t.deleteNode} />
+                <Kbd label={formatShortcutLabel(shortcuts.delete, ctrlKey)} desc={t.deleteNode} />
               </ShortcutGroup>
 
               <ShortcutGroup title={t.connectionActions}>
-                <Kbd label="Space" desc={t.space} />
-                <Kbd label="Enter" desc={t.enterConnection} />
-                <Kbd label="Tab" desc={t.tab} />
-                <Kbd label="/" desc={t.search} />
+                <Kbd label={formatShortcutLabel(shortcuts.editText, ctrlKey)} desc={t.space} />
+                <Kbd label={formatShortcutLabel(shortcuts.createNode, ctrlKey)} desc={t.enterConnection} />
+                <Kbd label={formatShortcutLabel(shortcuts.cycleStyle, ctrlKey)} desc={t.tab} />
+                <Kbd label={formatShortcutLabel(shortcuts.search, ctrlKey)} desc={t.search} />
                 <Kbd label={`${ctrlKey}+Arrows`} desc={t.ctrlArrowsConnection} />
-                <Kbd label="Del" desc={t.deleteConnection} />
+                <Kbd label={formatShortcutLabel(shortcuts.delete, ctrlKey)} desc={t.deleteConnection} />
               </ShortcutGroup>
             </div>
           )}
@@ -2706,6 +2921,250 @@ export default function App() {
           <span className="text-xs text-slate-400">{t.tabToCycle}</span>
         </div>
       )}
+
+      {/* Shortcuts Settings Modal */}
+      <ShortcutsModal
+        isOpen={isShortcutsModalOpen}
+        onClose={() => setIsShortcutsModalOpen(false)}
+        shortcuts={shortcuts}
+        onSave={setShortcuts}
+        t={t}
+        ctrlKey={ctrlKey}
+      />
+    </div>
+  );
+}
+
+// Shortcuts Settings Modal Component
+interface ShortcutsModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  shortcuts: KeyboardShortcuts;
+  onSave: (shortcuts: KeyboardShortcuts) => void;
+  t: typeof TRANSLATIONS.en;
+  ctrlKey: string;
+}
+
+function ShortcutsModal({ isOpen, onClose, shortcuts, onSave, t, ctrlKey }: ShortcutsModalProps) {
+  const [localShortcuts, setLocalShortcuts] = useState<KeyboardShortcuts>(shortcuts);
+  const [recordingAction, setRecordingAction] = useState<string | null>(null);
+  const [conflicts, setConflicts] = useState<Set<string>>(new Set());
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      setLocalShortcuts(shortcuts);
+      setConflicts(new Set());
+      setRecordingAction(null);
+    }
+  }, [isOpen, shortcuts]);
+
+  useEffect(() => {
+    if (!isOpen || !recordingAction) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      // Ignore modifier-only keys
+      if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return;
+
+      const newShortcut = {
+        key: e.key,
+        ctrl: e.ctrlKey || false,
+        shift: e.shiftKey || false,
+        alt: e.altKey || false,
+        meta: e.metaKey || false,
+      };
+
+      setLocalShortcuts(prev => ({
+        ...prev,
+        [recordingAction]: newShortcut,
+      }));
+
+      setRecordingAction(null);
+      checkConflicts({ ...localShortcuts, [recordingAction]: newShortcut });
+    };
+
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [isOpen, recordingAction, localShortcuts]);
+
+  // Define action groups that can share the same shortcut (they operate in different contexts)
+  const compatibleGroups: string[][] = [
+    // Global createNode and connection createNode can share Enter
+    ['createNode', 'createConnection'],
+  ];
+
+  const checkConflicts = (current: KeyboardShortcuts) => {
+    const seen = new Map<string, string>();
+    const newConflicts = new Set<string>();
+
+    Object.entries(current).forEach(([action, config]) => {
+      const keyStr = formatShortcut(config);
+
+      if (seen.has(keyStr)) {
+        const existingAction = seen.get(keyStr)!;
+
+        // Check if these actions are in a compatible group
+        const isCompatible = compatibleGroups.some(group =>
+          group.includes(action) && group.includes(existingAction)
+        );
+
+        if (!isCompatible) {
+          newConflicts.add(action);
+          newConflicts.add(existingAction);
+        }
+      } else {
+        seen.set(keyStr, action);
+      }
+    });
+
+    setConflicts(newConflicts);
+  };
+
+  const formatShortcut = (config: { key: string; ctrl?: boolean; shift?: boolean; alt?: boolean; meta?: boolean }) => {
+    const parts: string[] = [];
+    if (config.ctrl) parts.push(ctrlKey);
+    if (config.meta && ctrlKey !== 'Cmd') parts.push('Cmd');
+    if (config.alt) parts.push('Alt');
+    if (config.shift) parts.push('Shift');
+    if (config.key === ' ') {
+      parts.push('Space');
+    } else if (config.key.startsWith('Arrow')) {
+      parts.push(config.key.replace('Arrow', ''));
+    } else {
+      parts.push(config.key);
+    }
+    return parts.join('+');
+  };
+
+  const handleReset = () => {
+    setLocalShortcuts(DEFAULT_SHORTCUTS);
+    checkConflicts(DEFAULT_SHORTCUTS);
+  };
+
+  const handleSave = () => {
+    if (conflicts.size > 0) {
+      alert(t.shortcutConflict);
+      return;
+    }
+    onSave(localShortcuts);
+    onClose();
+  };
+
+  const actionNames: { key: keyof KeyboardShortcuts; label: string }[] = [
+    { key: 'createNode', label: t.actionCreateNode },
+    { key: 'createConnection', label: t.actionCreateConnection },
+    { key: 'createNodeBelow', label: t.actionCreateNodeBelow },
+    { key: 'returnConnection', label: t.actionReturnConnection },
+    { key: 'editText', label: t.actionEditText },
+    { key: 'delete', label: t.actionDelete },
+    { key: 'undo', label: t.actionUndo },
+    { key: 'redo', label: t.actionRedo },
+    { key: 'zoomIn', label: t.actionZoomIn },
+    { key: 'zoomOut', label: t.actionZoomOut },
+    { key: 'zoomReset', label: t.actionZoomReset },
+    { key: 'moveUp', label: t.actionMoveUp },
+    { key: 'moveDown', label: t.actionMoveDown },
+    { key: 'moveLeft', label: t.actionMoveLeft },
+    { key: 'moveRight', label: t.actionMoveRight },
+    { key: 'cycleStyle', label: t.actionCycleStyle },
+    { key: 'search', label: t.actionSearch },
+    { key: 'openShortcuts', label: t.actionOpenShortcuts },
+  ];
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
+
+      {/* Modal */}
+      <div
+        ref={modalRef}
+        className="relative bg-white rounded-2xl shadow-2xl w-[480px] max-h-[80vh] flex flex-col"
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+          <h2 className="text-lg font-semibold text-slate-800">{t.shortcutsSettings}</h2>
+          <button
+            onClick={onClose}
+            className="p-1 hover:bg-slate-100 rounded-lg transition-colors text-slate-400 hover:text-slate-600"
+          >
+            <Minus size={20} />
+          </button>
+        </div>
+
+        {/* Instructions */}
+        <div className="px-6 py-3 bg-slate-50 border-b border-slate-200">
+          <p className="text-xs text-slate-500">{t.clickToRecord}</p>
+        </div>
+
+        {/* Shortcuts List */}
+        <div className="flex-1 overflow-y-auto p-4">
+          <div className="space-y-2">
+            {actionNames.map(({ key, label }) => {
+              const config = localShortcuts[key];
+              const isRecording = recordingAction === key;
+              const hasConflict = conflicts.has(key);
+
+              return (
+                <div
+                  key={key}
+                  className={`flex items-center justify-between p-3 rounded-xl border transition-all ${
+                    hasConflict
+                      ? 'bg-red-50 border-red-200'
+                      : isRecording
+                        ? 'bg-blue-50 border-blue-300 ring-2 ring-blue-200'
+                        : 'bg-slate-50 border-slate-200 hover:border-slate-300'
+                  }`}
+                >
+                  <span className="text-sm font-medium text-slate-700">{label}</span>
+                  <button
+                    onClick={() => setRecordingAction(isRecording ? null : key)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all min-w-[120px] ${
+                      isRecording
+                        ? 'bg-blue-500 text-white animate-pulse'
+                        : hasConflict
+                          ? 'bg-red-100 text-red-600 border border-red-200'
+                          : 'bg-white border border-slate-300 text-slate-600 hover:border-slate-400'
+                    }`}
+                  >
+                    {isRecording ? t.recording : formatShortcut(config)}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between px-6 py-4 border-t border-slate-200">
+          <button
+            onClick={handleReset}
+            className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors"
+          >
+            {t.resetToDefaults}
+          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors"
+            >
+              {t.cancel}
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={conflicts.size > 0}
+              className="px-4 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 disabled:bg-slate-300 disabled:cursor-not-allowed rounded-lg transition-colors"
+            >
+              {t.save}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
