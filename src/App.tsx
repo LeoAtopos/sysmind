@@ -31,6 +31,7 @@ const RETURN_CONN_TARGET_OFFSET_Y = NODE_HEIGHT / 2 + 40;
 const ZOOM_STEP = 0.1;
 const MIN_SCALE = 0.4;
 const MAX_SCALE = 2.5;
+const LANGUAGE_STORAGE_KEY = 'sysmind-language';
 
 
 const measureText = (text: string, font: string) => {
@@ -224,6 +225,9 @@ const TRANSLATIONS = {
 
     emptyHint: '回车键开始创作',
     settings: '设置',
+    language: '语言',
+    languageZh: '中文',
+    languageEn: '英文',
     shortcutsSettings: '快捷键设置',
     shortcutAction: '操作',
     shortcutKey: '快捷键',
@@ -305,6 +309,9 @@ const TRANSLATIONS = {
 
     emptyHint: 'Press ENTER to create',
     settings: 'Settings',
+    language: 'Language',
+    languageZh: '中文',
+    languageEn: 'English',
     shortcutsSettings: 'Keyboard Shortcuts',
     shortcutAction: 'Action',
     shortcutKey: 'Shortcut',
@@ -356,6 +363,15 @@ function formatShortcutLabel(config: { key: string; ctrl?: boolean; shift?: bool
 }
 
 export default function App() {
+  const [language, setLanguage] = useState<'zh' | 'en'>(() => {
+    try {
+      const savedLanguage = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
+      if (savedLanguage === 'zh' || savedLanguage === 'en') return savedLanguage;
+    } catch {
+      // Ignore localStorage access failures and fall back to browser language.
+    }
+    return navigator.language.startsWith('zh') ? 'zh' : 'en';
+  });
   const [nodes, setNodes] = useState<Node[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [focused, setFocused] = useState<FocusedElement>(null);
@@ -447,10 +463,7 @@ export default function App() {
   const isMac = useMemo(() => /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent), []);
   const ctrlKey = isMac ? 'Cmd' : 'Ctrl';
 
-  const t = useMemo(() => {
-    const lang = navigator.language.startsWith('zh') ? 'zh' : 'en';
-    return TRANSLATIONS[lang];
-  }, []);
+  const t = useMemo(() => TRANSLATIONS[language], [language]);
 
   const canvasRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
@@ -474,6 +487,14 @@ export default function App() {
 
   const isSameFocus = (a: FocusedElement, b: FocusedElement) => a?.type === b?.type && a?.id === b?.id;
 
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
+    } catch {
+      // Ignore localStorage access failures.
+    }
+    document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en';
+  }, [language]);
 
 
 
@@ -1040,7 +1061,7 @@ export default function App() {
 
   // Helper to check if a keyboard event matches a shortcut config
   const matchesShortcut = useCallback((e: KeyboardEvent, config: { key: string; ctrl?: boolean; shift?: boolean; alt?: boolean; meta?: boolean }) => {
-    const keyMatch = e.key === config.key || e.code === config.key;
+    const keyMatch = e.key === config.key || e.code === config.key || (config.key === 'Delete' && e.key === 'Backspace');
     const ctrlMatch = !!(e.ctrlKey || e.metaKey) === !!(config.ctrl || config.meta);
     const shiftMatch = e.shiftKey === !!config.shift;
     const altMatch = e.altKey === !!config.alt;
@@ -1161,54 +1182,124 @@ export default function App() {
       }
 
       const selectedTotal = selectedNodeIds.length + selectedConnectionIds.length;
-      if (matchesShortcut(e, shortcuts.delete) && selectedTotal > 1) {
+      if (matchesShortcut(e, shortcuts.delete)) {
         e.preventDefault();
-        const nodeDeleteSet = new Set(selectedNodeIds);
-        const connDeleteSet = new Set(selectedConnectionIds);
+        if (focused) {
+          if (focused.type === 'node') {
+            const node = getNode(focused.id);
+            if (!node) return;
+            const deletedPos = { x: node.x, y: node.y };
+            const newNodes = nodes.filter(n => n.id !== node.id);
+            const newConns = connections
+              .map(c => {
+                const sourceDeleted = c.fromId === node.id;
+                const targetDeleted = c.toId === node.id;
+                if (!sourceDeleted && !targetDeleted) return c;
 
-        const deletedPoints: { x: number; y: number }[] = [];
-        nodes.forEach((n) => {
-          if (nodeDeleteSet.has(n.id)) deletedPoints.push({ x: n.x, y: n.y });
-        });
-        connections.forEach((c) => {
-          if (!connDeleteSet.has(c.id)) return;
-          const p = getConnectionFocusPoint(c);
-          if (p) deletedPoints.push(p);
-        });
+                if (sourceDeleted && targetDeleted) return null;
 
-        const nextNodes = nodes.filter(n => !nodeDeleteSet.has(n.id));
-        const nextConns = connections.filter(c => {
-          if (connDeleteSet.has(c.id)) return false;
-          if (nodeDeleteSet.has(c.fromId)) return false;
-          if (c.toId && nodeDeleteSet.has(c.toId)) return false;
-          return true;
-        });
+                if (sourceDeleted) {
+                  if (!c.toId) return null;
+                  return {
+                    ...c,
+                    fromId: c.toId,
+                    toId: null,
+                    tempToPos: deletedPos,
+                    curveBend: 0,
+                    curveBendRatio: undefined,
 
-        selectedNodeIds.forEach((id) => { delete nodeSourceRef.current[id]; });
-        Object.keys(nodeSourceRef.current).forEach((k) => {
-          if (nodeDeleteSet.has(nodeSourceRef.current[k])) delete nodeSourceRef.current[k];
-        });
+                  };
+                }
 
-        const center = deletedPoints.length > 0
-          ? deletedPoints.reduce((acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }), { x: 0, y: 0 })
-          : { x: 0, y: 0 };
-        const deletedPos = deletedPoints.length > 0
-          ? { x: center.x / deletedPoints.length, y: center.y / deletedPoints.length }
-          : { x: 0, y: 0 };
+                return {
+                  ...c,
+                  toId: null,
+                  tempToPos: deletedPos,
+                  curveBend: 0,
+                  curveBendRatio: undefined,
+                };
 
-        const fallbackFocus = resolveDeleteFallbackFocus(nextNodes, nextConns, deletedPos);
+              })
+              .filter((c): c is Connection => !!c);
 
-        if (fallbackFocus) {
-          skipAutoFocusOnceRef.current = true;
+            delete nodeSourceRef.current[node.id];
+            Object.keys(nodeSourceRef.current).forEach((k) => {
+              if (nodeSourceRef.current[k] === node.id) delete nodeSourceRef.current[k];
+            });
+
+            const fallbackFocus = resolveDeleteFallbackFocus(newNodes, newConns, deletedPos);
+
+            if (fallbackFocus) {
+              skipAutoFocusOnceRef.current = true;
+            }
+            setIsEditing(false);
+            setNodes(newNodes);
+            setConnections(newConns);
+            setFocused(fallbackFocus);
+            pushHistory(newNodes, newConns, fallbackFocus);
+          } else if (focused.type === 'connection') {
+            const conn = getConnection(focused.id);
+            if (!conn) return;
+            const newConns = connections.filter(c => c.id !== conn.id);
+            const connFocusPoint = getConnectionFocusPoint(conn) ?? { x: 0, y: 0 };
+            const fallbackFocus = resolveDeleteFallbackFocus(nodes, newConns, connFocusPoint);
+
+            if (fallbackFocus) {
+              skipAutoFocusOnceRef.current = true;
+            }
+            setIsEditing(false);
+            setConnections(newConns);
+            setFocused(fallbackFocus);
+            pushHistory(nodes, newConns, fallbackFocus);
+          }
+        } else if (selectedTotal > 0) {
+          const nodeDeleteSet = new Set(selectedNodeIds);
+          const connDeleteSet = new Set(selectedConnectionIds);
+
+          const deletedPoints: { x: number; y: number }[] = [];
+          nodes.forEach((n) => {
+            if (nodeDeleteSet.has(n.id)) deletedPoints.push({ x: n.x, y: n.y });
+          });
+          connections.forEach((c) => {
+            if (!connDeleteSet.has(c.id)) return;
+            const p = getConnectionFocusPoint(c);
+            if (p) deletedPoints.push(p);
+          });
+
+          const nextNodes = nodes.filter(n => !nodeDeleteSet.has(n.id));
+          const nextConns = connections.filter(c => {
+            if (connDeleteSet.has(c.id)) return false;
+            if (nodeDeleteSet.has(c.fromId)) return false;
+            if (c.toId && nodeDeleteSet.has(c.toId)) return false;
+            return true;
+          });
+
+          selectedNodeIds.forEach((id) => { delete nodeSourceRef.current[id]; });
+          Object.keys(nodeSourceRef.current).forEach((k) => {
+            if (nodeDeleteSet.has(nodeSourceRef.current[k])) delete nodeSourceRef.current[k];
+          });
+
+          const center = deletedPoints.length > 0
+            ? deletedPoints.reduce((acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }), { x: 0, y: 0 })
+            : { x: 0, y: 0 };
+          const deletedPos = deletedPoints.length > 0
+            ? { x: center.x / deletedPoints.length, y: center.y / deletedPoints.length }
+            : { x: 0, y: 0 };
+
+          const fallbackFocus = resolveDeleteFallbackFocus(nextNodes, nextConns, deletedPos);
+
+          if (fallbackFocus) {
+            skipAutoFocusOnceRef.current = true;
+          }
+
+          setIsEditing(false);
+          setNodes(nextNodes);
+          setConnections(nextConns);
+          setFocused(fallbackFocus);
+          setSelectedNodeIds([]);
+          setSelectedConnectionIds([]);
+          pushHistory(nextNodes, nextConns, fallbackFocus);
         }
-
-        setIsEditing(false);
-        setNodes(nextNodes);
-        setConnections(nextConns);
-        setFocused(fallbackFocus);
-        setSelectedNodeIds([]);
-        setSelectedConnectionIds([]);
-        pushHistory(nextNodes, nextConns, fallbackFocus);
         return;
       }
 
@@ -1303,56 +1394,6 @@ export default function App() {
           const nextNodes = nodes.map(n => n.id === node.id ? { ...n, style: nextStyle } : n);
           setNodes(nextNodes);
           pushHistory(nextNodes, connections, focused);
-        } else if (matchesShortcut(e, shortcuts.delete)) {
-          const deletedPos = { x: node.x, y: node.y };
-          const newNodes = nodes.filter(n => n.id !== node.id);
-          const newConns = connections
-            .map(c => {
-              const sourceDeleted = c.fromId === node.id;
-              const targetDeleted = c.toId === node.id;
-              if (!sourceDeleted && !targetDeleted) return c;
-
-              if (sourceDeleted && targetDeleted) return null;
-
-              if (sourceDeleted) {
-                if (!c.toId) return null;
-                return {
-                  ...c,
-                  fromId: c.toId,
-                  toId: null,
-                  tempToPos: deletedPos,
-                  curveBend: 0,
-                  curveBendRatio: undefined,
-
-                };
-              }
-
-              return {
-                ...c,
-                toId: null,
-                tempToPos: deletedPos,
-                curveBend: 0,
-                curveBendRatio: undefined,
-              };
-
-            })
-            .filter((c): c is Connection => !!c);
-
-          delete nodeSourceRef.current[node.id];
-          Object.keys(nodeSourceRef.current).forEach((k) => {
-            if (nodeSourceRef.current[k] === node.id) delete nodeSourceRef.current[k];
-          });
-
-          const fallbackFocus = resolveDeleteFallbackFocus(newNodes, newConns, deletedPos);
-
-          if (fallbackFocus) {
-            skipAutoFocusOnceRef.current = true;
-          }
-          setIsEditing(false);
-          setNodes(newNodes);
-          setConnections(newConns);
-          setFocused(fallbackFocus);
-          pushHistory(newNodes, newConns, fallbackFocus);
         } else if ((e.ctrlKey || e.metaKey) && (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
           // Ctrl/Cmd + Arrow keys: Move node
           e.preventDefault();
@@ -1415,19 +1456,6 @@ export default function App() {
         } else if (matchesShortcut(e, shortcuts.search)) {
           e.preventDefault();
           setSearchQuery('');
-        } else if (matchesShortcut(e, shortcuts.delete)) {
-          const newConns = connections.filter(c => c.id !== conn.id);
-          const connFocusPoint = getConnectionFocusPoint(conn) ?? { x: 0, y: 0 };
-          const fallbackFocus = resolveDeleteFallbackFocus(nodes, newConns, connFocusPoint);
-
-          if (fallbackFocus) {
-            skipAutoFocusOnceRef.current = true;
-          }
-          setIsEditing(false);
-          setConnections(newConns);
-          setFocused(fallbackFocus);
-          pushHistory(nodes, newConns, fallbackFocus);
-
         } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
 
           // Just trigger editing mode, browser handles the character
@@ -2779,7 +2807,7 @@ export default function App() {
       </AnimatePresence>
 
       {loadedFileMeta && (
-        <div onMouseDown={(e) => e.stopPropagation()} className="absolute top-6 left-1/2 -translate-x-1/2 max-w-[420px] bg-white/85 backdrop-blur-sm border border-slate-200 rounded-xl shadow-sm px-3 py-1.5 text-xs text-slate-700 font-medium truncate text-center z-40">
+        <div onMouseDown={(e) => e.stopPropagation()} className="absolute top-6 right-6 max-w-[420px] bg-white/85 backdrop-blur-sm border border-slate-200 rounded-xl shadow-sm px-3 py-1.5 text-xs text-slate-700 font-medium truncate z-40">
           {loadedFileMeta.name}
         </div>
       )}
@@ -2813,6 +2841,31 @@ export default function App() {
             </button>
           </div>
           <div className="flex items-center gap-1 bg-white/80 backdrop-blur-sm border border-slate-200 p-1 rounded-xl shadow-sm">
+            <div className="flex items-center gap-1 pr-1 mr-1 border-r border-slate-200">
+              <span className="px-2 text-[11px] font-semibold text-slate-500">{t.language}</span>
+              <button
+                onClick={(e) => { e.stopPropagation(); setLanguage('zh'); }}
+                title={t.languageZh}
+                className={`px-2.5 py-1.5 rounded-lg transition-colors text-xs font-medium ${
+                  language === 'zh'
+                    ? 'bg-slate-900 text-white'
+                    : 'text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                中文
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); setLanguage('en'); }}
+                title={t.languageEn}
+                className={`px-2.5 py-1.5 rounded-lg transition-colors text-xs font-medium ${
+                  language === 'en'
+                    ? 'bg-slate-900 text-white'
+                    : 'text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                EN
+              </button>
+            </div>
             <button
               onClick={(e) => { e.stopPropagation(); handleImportFromPicker(); }}
               title={t.import}
@@ -3186,5 +3239,4 @@ function Kbd({ label, desc }: { label: string; desc: string }) {
     </div>
   );
 }
-
 
