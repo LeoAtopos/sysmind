@@ -182,6 +182,7 @@ const TRANSLATIONS = {
     connectionActions: '连线焦点操作',
     enterGlobal: '新建节点',
     enterNode: '从节点新建连线',
+    shiftEnterNode: '下方新建节点',
     enterConnection: '完成连线/新建目标节点',
     space: '编辑文字',
     tab: '切换样式',
@@ -231,6 +232,7 @@ const TRANSLATIONS = {
     connectionActions: 'Connection-Focused',
     enterGlobal: 'Create Node',
     enterNode: 'Create Connection from Node',
+    shiftEnterNode: 'Create Node Below',
     enterConnection: 'Complete Link / Create Target Node',
     space: 'Edit Text',
     tab: 'Cycle Style',
@@ -1150,7 +1152,16 @@ export default function App() {
             setFocused(nextFocused);
             pushHistory(nodes, [...connections, newConn], nextFocused);
           }
-
+        } else if (e.shiftKey && e.key === 'Enter') {
+          // Shift+Enter: Create a new node below the current node and enter editing mode
+          e.preventDefault();
+          const newNodeY = node.y + NODE_HEIGHT + 60; // Place below with some distance
+          const newNode = createNode(node.x, newNodeY);
+          const nextFocused = { type: 'node', id: newNode.id };
+          setFocused(nextFocused);
+          setShouldSelect(true);
+          setIsEditing(true);
+          pushHistory([...nodes, newNode], connections, nextFocused);
         } else if (e.key === 'Enter') {
           e.preventDefault();
           const newConn = createConnection(node.id, null, { x: node.x + lastDirection.x, y: node.y + lastDirection.y });
@@ -2666,6 +2677,7 @@ export default function App() {
               <ShortcutGroup title={t.nodeActions}>
                 <Kbd label="Space" desc={t.space} />
                 <Kbd label="Enter" desc={t.enterNode} />
+                <Kbd label="Shift+Enter" desc={t.shiftEnterNode} />
                 <Kbd label={`${ctrlKey}+Arrows`} desc={t.ctrlArrowsNode} />
                 <Kbd label="Del" desc={t.deleteNode} />
               </ShortcutGroup>
