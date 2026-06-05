@@ -192,13 +192,18 @@ const resolveNodeOverlaps = (inputNodes: Node[], lockedNodeId?: string) => {
 const TRANSLATIONS = {
   zh: {
     connLength: '连线长度',
-    globalActions: '全局操作',
+    commonActions: '通用操作',
+    emptyFocusActions: '空焦点操作',
     nodeActions: '节点焦点操作',
     connectionActions: '连线焦点操作',
+    nodeEditingActions: '节点文本输入',
+    connectionEditingActions: '连线文本输入',
     enterGlobal: '新建节点',
     enterNode: '从节点新建连线',
     shiftEnterNode: '下方新建节点',
     enterConnection: '完成连线/新建目标节点',
+    typeText: '输入文字',
+    finishEditing: '完成编辑',
     space: '编辑文字',
     tab: '切换样式',
     tabNode: '切换节点样式',
@@ -277,13 +282,18 @@ const TRANSLATIONS = {
   },
   en: {
     connLength: 'Conn Length',
-    globalActions: 'Global Actions',
+    commonActions: 'Common Actions',
+    emptyFocusActions: 'No-Focus Actions',
     nodeActions: 'Node-Focused',
     connectionActions: 'Connection-Focused',
+    nodeEditingActions: 'Node Text Input',
+    connectionEditingActions: 'Link Text Input',
     enterGlobal: 'Create Node',
     enterNode: 'Create Connection from Node',
     shiftEnterNode: 'Create Node Below',
     enterConnection: 'Complete Link / Create Target Node',
+    typeText: 'Type Text',
+    finishEditing: 'Finish Editing',
     space: 'Edit Text',
     tab: 'Cycle Style',
     tabNode: 'Cycle Node Style',
@@ -479,6 +489,72 @@ export default function App() {
   const ctrlKey = isMac ? 'Cmd' : 'Ctrl';
 
   const t = useMemo(() => TRANSLATIONS[language], [language]);
+  const commonShortcutHints = useMemo(() => ({
+    title: t.commonActions,
+    items: [
+      { label: `${ctrlKey}+ +/-`, desc: t.zoom },
+      { label: formatShortcutLabel(shortcuts.zoomReset, ctrlKey), desc: t.zoomReset },
+      { label: 'Arrows', desc: t.arrows },
+      { label: formatShortcutLabel(shortcuts.undo, ctrlKey), desc: t.undo },
+      { label: formatShortcutLabel(shortcuts.redo, ctrlKey), desc: t.redo },
+    ],
+  }), [ctrlKey, shortcuts, t]);
+  const currentShortcutHints = useMemo(() => {
+    if (isEditing && focused?.type === 'node') {
+      return {
+        title: t.nodeEditingActions,
+        items: [
+          { label: language === 'zh' ? '输入' : 'Type', desc: t.typeText },
+          { label: 'Enter / Esc', desc: t.finishEditing },
+        ],
+      };
+    }
+
+    if (isEditing && focused?.type === 'connection') {
+      return {
+        title: t.connectionEditingActions,
+        items: [
+          { label: language === 'zh' ? '输入' : 'Type', desc: t.typeText },
+          { label: 'Enter / Esc', desc: t.finishEditing },
+        ],
+      };
+    }
+
+    if (focused?.type === 'node') {
+      return {
+        title: t.nodeActions,
+        items: [
+          { label: formatShortcutLabel(shortcuts.editText, ctrlKey), desc: t.space },
+          { label: formatShortcutLabel(shortcuts.createConnection, ctrlKey), desc: t.enterNode },
+          { label: formatShortcutLabel(shortcuts.createNodeBelow, ctrlKey), desc: t.shiftEnterNode },
+          { label: formatShortcutLabel(shortcuts.cycleStyle, ctrlKey), desc: t.tabNode },
+          { label: `${ctrlKey}+Arrows`, desc: t.ctrlArrowsNode },
+          { label: formatShortcutLabel(shortcuts.delete, ctrlKey), desc: t.deleteNode },
+        ],
+      };
+    }
+
+    if (focused?.type === 'connection') {
+      return {
+        title: t.connectionActions,
+        items: [
+          { label: formatShortcutLabel(shortcuts.editText, ctrlKey), desc: t.space },
+          { label: formatShortcutLabel(shortcuts.createNode, ctrlKey), desc: t.enterConnection },
+          { label: formatShortcutLabel(shortcuts.cycleStyle, ctrlKey), desc: t.tab },
+          { label: formatShortcutLabel(shortcuts.search, ctrlKey), desc: t.search },
+          { label: `${ctrlKey}+Arrows`, desc: t.ctrlArrowsConnection },
+          { label: formatShortcutLabel(shortcuts.delete, ctrlKey), desc: t.deleteConnection },
+        ],
+      };
+    }
+
+    return {
+      title: t.emptyFocusActions,
+      items: [
+        { label: formatShortcutLabel(shortcuts.createNode, ctrlKey), desc: t.enterGlobal },
+      ],
+    };
+  }, [ctrlKey, focused?.type, isEditing, language, shortcuts, t]);
 
   const canvasRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
@@ -3379,31 +3455,19 @@ export default function App() {
           </button>
           {isShortcutsExpanded && (
             <div className="mt-2 flex flex-col gap-2">
-              <ShortcutGroup title={t.globalActions}>
-                <Kbd label={formatShortcutLabel(shortcuts.createNode, ctrlKey)} desc={t.enterGlobal} />
-                <Kbd label={`${ctrlKey}+ +/-`} desc={t.zoom} />
-                <Kbd label={formatShortcutLabel(shortcuts.zoomReset, ctrlKey)} desc={t.zoomReset} />
-                <Kbd label="Arrows" desc={t.arrows} />
-                <Kbd label={formatShortcutLabel(shortcuts.undo, ctrlKey)} desc={t.undo} />
-                <Kbd label={formatShortcutLabel(shortcuts.redo, ctrlKey)} desc={t.redo} />
+              <ShortcutGroup title={commonShortcutHints.title}>
+                {commonShortcutHints.items.map(({ label, desc }) => (
+                  <div key={`${label}-${desc}`}>
+                    <Kbd label={label} desc={desc} />
+                  </div>
+                ))}
               </ShortcutGroup>
-
-              <ShortcutGroup title={t.nodeActions}>
-                <Kbd label={formatShortcutLabel(shortcuts.editText, ctrlKey)} desc={t.space} />
-                <Kbd label={formatShortcutLabel(shortcuts.createConnection, ctrlKey)} desc={t.enterNode} />
-                <Kbd label={formatShortcutLabel(shortcuts.createNodeBelow, ctrlKey)} desc={t.shiftEnterNode} />
-                <Kbd label={formatShortcutLabel(shortcuts.cycleStyle, ctrlKey)} desc={t.tabNode} />
-                <Kbd label={`${ctrlKey}+Arrows`} desc={t.ctrlArrowsNode} />
-                <Kbd label={formatShortcutLabel(shortcuts.delete, ctrlKey)} desc={t.deleteNode} />
-              </ShortcutGroup>
-
-              <ShortcutGroup title={t.connectionActions}>
-                <Kbd label={formatShortcutLabel(shortcuts.editText, ctrlKey)} desc={t.space} />
-                <Kbd label={formatShortcutLabel(shortcuts.createNode, ctrlKey)} desc={t.enterConnection} />
-                <Kbd label={formatShortcutLabel(shortcuts.cycleStyle, ctrlKey)} desc={t.tab} />
-                <Kbd label={formatShortcutLabel(shortcuts.search, ctrlKey)} desc={t.search} />
-                <Kbd label={`${ctrlKey}+Arrows`} desc={t.ctrlArrowsConnection} />
-                <Kbd label={formatShortcutLabel(shortcuts.delete, ctrlKey)} desc={t.deleteConnection} />
+              <ShortcutGroup title={currentShortcutHints.title}>
+                {currentShortcutHints.items.map(({ label, desc }) => (
+                  <div key={`${label}-${desc}`}>
+                    <Kbd label={label} desc={desc} />
+                  </div>
+                ))}
               </ShortcutGroup>
             </div>
           )}
