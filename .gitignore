@@ -5,6 +5,7 @@ dist/
 itchio-release/
 coverage/
 .DS_Store
+.playwright-mcp
 *.log
 .env*
 !.env.example
