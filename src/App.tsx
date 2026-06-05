@@ -44,6 +44,20 @@ const measureText = (text: string, font: string) => {
   return text.length * 8;
 };
 
+const triggerDownload = (blob: Blob, filename: string) => {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  window.setTimeout(() => {
+    URL.revokeObjectURL(url);
+    a.remove();
+  }, 1000);
+};
+
 const wrapTextLines = (text: string, maxTextWidth: number, font: string) => {
   if (!text) return [''];
   const words = text.split(/\s+/);
@@ -205,6 +219,7 @@ const TRANSLATIONS = {
     style: '样式:',
     tabToCycle: '按 Tab 键切换',
     export: '导出',
+    exportImage: '导出图片',
     import: '加载',
     save: '保存',
     newCanvas: '新建',
@@ -573,13 +588,10 @@ export default function App() {
   // Export to JSON
   const handleExport = useCallback(() => {
     const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `sysmind-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    triggerDownload(blob, `sysmind-${new Date().toISOString().slice(0, 10)}.json`);
   }, [exportData]);
+
+  // Export image handled after helper function declarations
 
   const getBestEffortFilePath = useCallback((file: any, fallback?: string) => {
     const realPath = typeof file?.path === 'string' && file.path.trim().length > 0 ? file.path : null;
@@ -764,7 +776,6 @@ export default function App() {
   };
 
   const resolveDeleteFallbackFocus = (
-
     nextNodes: Node[],
     nextConnections: Connection[],
     deletedPos: { x: number; y: number },
@@ -2152,6 +2163,434 @@ export default function App() {
     };
   };
 
+  const handleExportImage = useCallback(() => {
+    const baseExportScale = 2;
+    const exportPadding = 80;
+    const maxCanvasDimension = 8192;
+    const renderScale = 1;
+    const canvas = document.createElement('canvas');
+
+    const createContext = (width: number, height: number) => {
+      const safeWidth = Math.max(1, Math.ceil(width));
+      const safeHeight = Math.max(1, Math.ceil(height));
+      const scaleLimit = Math.min(
+        1,
+        maxCanvasDimension / Math.max(safeWidth * baseExportScale, safeHeight * baseExportScale, 1),
+      );
+      const exportScale = Math.max(0.5, Number((baseExportScale * scaleLimit).toFixed(2)));
+
+      canvas.width = Math.max(1, Math.round(safeWidth * exportScale));
+      canvas.height = Math.max(1, Math.round(safeHeight * exportScale));
+
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+
+      ctx.scale(exportScale, exportScale);
+      ctx.imageSmoothingEnabled = true;
+      return { ctx, width: safeWidth, height: safeHeight, exportScale };
+    };
+
+    const drawRoundedRect = (x: number, y: number, w: number, h: number, r: number) => {
+      activeCtx.beginPath();
+      activeCtx.moveTo(x + r, y);
+      activeCtx.lineTo(x + w - r, y);
+      activeCtx.quadraticCurveTo(x + w, y, x + w, y + r);
+      activeCtx.lineTo(x + w, y + h - r);
+      activeCtx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      activeCtx.lineTo(x + r, y + h);
+      activeCtx.quadraticCurveTo(x, y + h, x, y + h - r);
+      activeCtx.lineTo(x, y + r);
+      activeCtx.quadraticCurveTo(x, y, x + r, y);
+      activeCtx.closePath();
+    };
+
+    const drawNodeShadow = (nodeStyle: NodeStyle, isFocused: boolean, isSelected: boolean) => {
+      if (nodeStyle === 'text') {
+        activeCtx.shadowColor = 'transparent';
+        activeCtx.shadowBlur = 0;
+        activeCtx.shadowOffsetY = 0;
+        return;
+      }
+      if (isFocused) {
+        activeCtx.shadowColor = 'rgba(15, 23, 42, 0.22)';
+        activeCtx.shadowBlur = 18 * renderScale;
+        activeCtx.shadowOffsetY = 4 * renderScale;
+        return;
+      }
+      if (isSelected) {
+        activeCtx.shadowColor = 'rgba(15, 23, 42, 0.16)';
+        activeCtx.shadowBlur = 12 * renderScale;
+        activeCtx.shadowOffsetY = 3 * renderScale;
+        return;
+      }
+      activeCtx.shadowColor = 'rgba(15, 23, 42, 0.12)';
+      activeCtx.shadowBlur = 8 * renderScale;
+      activeCtx.shadowOffsetY = 2 * renderScale;
+    };
+
+    const drawArrow = (from: { x: number; y: number }, to: { x: number; y: number }, color: string) => {
+      const dx = to.x - from.x;
+      const dy = to.y - from.y;
+      const len = Math.hypot(dx, dy);
+      if (len === 0) return;
+      const ux = dx / len;
+      const uy = dy / len;
+      const size = 9 * renderScale;
+      const perpX = -uy;
+      const perpY = ux;
+      const tip = to;
+      const baseX = tip.x - ux * size;
+      const baseY = tip.y - uy * size;
+      activeCtx.beginPath();
+      activeCtx.moveTo(tip.x, tip.y);
+      activeCtx.lineTo(baseX + perpX * (size * 0.4), baseY + perpY * (size * 0.4));
+      activeCtx.lineTo(baseX - perpX * (size * 0.4), baseY - perpY * (size * 0.4));
+      activeCtx.closePath();
+      activeCtx.fillStyle = color;
+      activeCtx.fill();
+    };
+
+    if (nodes.length === 0) {
+      const emptyExport = createContext(1600, 900);
+      if (!emptyExport) return;
+
+      const { ctx } = emptyExport;
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(0, 0, emptyExport.width, emptyExport.height);
+      ctx.fillStyle = 'rgba(15,23,42,0.04)';
+      for (let x = 0; x <= emptyExport.width; x += GRID_SIZE) {
+        for (let y = 0; y <= emptyExport.height; y += GRID_SIZE) {
+          ctx.fillRect(x, y, 1, 1);
+        }
+      }
+      ctx.fillStyle = '#475569';
+      ctx.font = '700 28px Inter, ui-sans-serif, system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(t.stormSystemTitle, emptyExport.width / 2, emptyExport.height / 2 - 12);
+      ctx.font = '500 20px Inter, ui-sans-serif, system-ui, sans-serif';
+      ctx.fillText(t.emptyHint, emptyExport.width / 2, emptyExport.height / 2 + 28);
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        triggerDownload(blob, `sysmind-${new Date().toISOString().slice(0, 10)}.png`);
+      }, 'image/png');
+      return;
+    }
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    const includeRect = (left: number, top: number, width: number, height: number) => {
+      minX = Math.min(minX, left);
+      minY = Math.min(minY, top);
+      maxX = Math.max(maxX, left + width);
+      maxY = Math.max(maxY, top + height);
+    };
+
+    const includePoint = (x: number, y: number, radius = 0) => {
+      includeRect(x - radius, y - radius, radius * 2, radius * 2);
+    };
+
+    nodes.forEach(node => {
+      const nodeBox = getNodeBoxSize(node.text);
+      const isFocused = focused?.type === 'node' && focused.id === node.id;
+      const focusScale = isFocused ? 1.05 : 1;
+      const nodeWidth = nodeBox.width * focusScale;
+      const nodeHeight = nodeBox.height * focusScale;
+      includeRect(node.x - nodeWidth / 2, node.y - nodeHeight / 2, nodeWidth, nodeHeight);
+    });
+
+    connections.forEach(conn => {
+      const fromNode = getNode(conn.fromId);
+      if (!fromNode) return;
+      const toNode = conn.toId ? getNode(conn.toId) : null;
+      const rawStartX = fromNode.x;
+      const rawStartY = fromNode.y;
+      const rawEndX = toNode ? toNode.x : (conn.tempToPos?.x ?? rawStartX + lastDirection.x);
+      const rawEndY = toNode ? toNode.y : (conn.tempToPos?.y ?? rawStartY + lastDirection.y);
+      const curveOffsetRaw = getConnectionCurveOffsetRaw(conn, { x: rawStartX, y: rawStartY }, { x: rawEndX, y: rawEndY });
+      const directionMultiplier = conn.toId && conn.fromId > conn.toId ? -1 : 1;
+      const curveOffset = curveOffsetRaw * directionMultiplier;
+      const centerDx = rawEndX - rawStartX;
+      const centerDy = rawEndY - rawStartY;
+      const centerLen = Math.hypot(centerDx, centerDy);
+      const normalX = centerLen === 0 ? 0 : -centerDy / centerLen;
+      const normalY = centerLen === 0 ? 0 : centerDx / centerLen;
+      const tangentLen = Math.max(26, centerLen * 0.22);
+      const c1CenterX = rawStartX + (centerLen === 0 ? 0 : (centerDx / centerLen) * tangentLen) + normalX * curveOffset;
+      const c1CenterY = rawStartY + (centerLen === 0 ? 0 : (centerDy / centerLen) * tangentLen) + normalY * curveOffset;
+      const c2CenterX = rawEndX - (centerLen === 0 ? 0 : (centerDx / centerLen) * tangentLen) + normalX * curveOffset;
+      const c2CenterY = rawEndY - (centerLen === 0 ? 0 : (centerDy / centerLen) * tangentLen) + normalY * curveOffset;
+      const startPoint = getEdgePoint({ x: c1CenterX, y: c1CenterY }, { x: rawStartX, y: rawStartY }, fromNode.id);
+      const endPoint = toNode
+        ? getEdgePoint({ x: c2CenterX, y: c2CenterY }, { x: rawEndX, y: rawEndY }, toNode.id)
+        : { x: rawEndX, y: rawEndY };
+      const c1World = { x: startPoint.x + (c1CenterX - rawStartX), y: startPoint.y + (c1CenterY - rawStartY) };
+      const c2World = { x: endPoint.x + (c2CenterX - rawEndX), y: endPoint.y + (c2CenterY - rawEndY) };
+      const linePadding = 12;
+
+      includePoint(startPoint.x, startPoint.y, linePadding);
+      includePoint(endPoint.x, endPoint.y, linePadding);
+      includePoint(c1World.x, c1World.y, linePadding);
+      includePoint(c2World.x, c2World.y, linePadding);
+
+      if (conn.text) {
+        const labelBox = getConnectionLabelSize(conn.text);
+        const labelX = curveOffset === 0
+          ? (startPoint.x + endPoint.x) / 2
+          : 0.125 * startPoint.x + 0.375 * c1World.x + 0.375 * c2World.x + 0.125 * endPoint.x;
+        const labelY = curveOffset === 0
+          ? (startPoint.y + endPoint.y) / 2
+          : 0.125 * startPoint.y + 0.375 * c1World.y + 0.375 * c2World.y + 0.125 * endPoint.y;
+        includeRect(
+          labelX - labelBox.width / 2 - 6,
+          labelY - labelBox.height / 2 - 6,
+          labelBox.width + 12,
+          labelBox.height + 12,
+        );
+      }
+    });
+
+    const contentWidth = Math.max(1, Math.ceil(maxX - minX));
+    const contentHeight = Math.max(1, Math.ceil(maxY - minY));
+    const exportWidth = contentWidth + exportPadding * 2;
+    const exportHeight = contentHeight + exportPadding * 2;
+    const exportResult = createContext(exportWidth, exportHeight);
+    if (!exportResult) return;
+
+    const { ctx: activeCtx, width, height } = exportResult;
+    const worldToScreen = (point: { x: number; y: number }) => ({
+      x: (point.x - minX) * renderScale + exportPadding,
+      y: (point.y - minY) * renderScale + exportPadding,
+    });
+
+    activeCtx.fillStyle = '#f8fafc';
+    activeCtx.fillRect(0, 0, width, height);
+
+    activeCtx.fillStyle = 'rgba(15,23,42,0.04)';
+    const gridStartX = exportPadding - ((((minX % GRID_SIZE) + GRID_SIZE) % GRID_SIZE) * renderScale);
+    const gridStartY = exportPadding - ((((minY % GRID_SIZE) + GRID_SIZE) % GRID_SIZE) * renderScale);
+    for (let x = gridStartX; x <= width; x += GRID_SIZE) {
+      for (let y = gridStartY; y <= height; y += GRID_SIZE) {
+        activeCtx.fillRect(x, y, 1, 1);
+      }
+    }
+
+    connections.forEach(conn => {
+      const fromNode = getNode(conn.fromId);
+      if (!fromNode) return;
+      const toNode = conn.toId ? getNode(conn.toId) : null;
+      const rawStartX = fromNode.x;
+      const rawStartY = fromNode.y;
+      const rawEndX = toNode ? toNode.x : (conn.tempToPos?.x ?? rawStartX + lastDirection.x);
+      const rawEndY = toNode ? toNode.y : (conn.tempToPos?.y ?? rawStartY + lastDirection.y);
+
+      const curveOffsetRaw = getConnectionCurveOffsetRaw(conn, { x: rawStartX, y: rawStartY }, { x: rawEndX, y: rawEndY });
+      const directionMultiplier = conn.toId && conn.fromId > conn.toId ? -1 : 1;
+      const curveOffset = curveOffsetRaw * directionMultiplier;
+      const centerDx = rawEndX - rawStartX;
+      const centerDy = rawEndY - rawStartY;
+      const centerLen = Math.hypot(centerDx, centerDy);
+      const normalX = centerLen === 0 ? 0 : -centerDy / centerLen;
+      const normalY = centerLen === 0 ? 0 : centerDx / centerLen;
+      const tangentLen = Math.max(26, centerLen * 0.22);
+      const c1CenterX = rawStartX + (centerLen === 0 ? 0 : (centerDx / centerLen) * tangentLen) + normalX * curveOffset;
+      const c1CenterY = rawStartY + (centerLen === 0 ? 0 : (centerDy / centerLen) * tangentLen) + normalY * curveOffset;
+      const c2CenterX = rawEndX - (centerLen === 0 ? 0 : (centerDx / centerLen) * tangentLen) + normalX * curveOffset;
+      const c2CenterY = rawEndY - (centerLen === 0 ? 0 : (centerDy / centerLen) * tangentLen) + normalY * curveOffset;
+
+      const startPoint = getEdgePoint({ x: c1CenterX, y: c1CenterY }, { x: rawStartX, y: rawStartY }, fromNode.id);
+      const endPoint = toNode
+        ? getEdgePoint({ x: c2CenterX, y: c2CenterY }, { x: rawEndX, y: rawEndY }, toNode.id)
+        : { x: rawEndX, y: rawEndY };
+
+      const c1World = { x: startPoint.x + (c1CenterX - rawStartX), y: startPoint.y + (c1CenterY - rawStartY) };
+      const c2World = { x: endPoint.x + (c2CenterX - rawEndX), y: endPoint.y + (c2CenterY - rawEndY) };
+      const start = worldToScreen(startPoint);
+      const end = worldToScreen(endPoint);
+      const c1 = worldToScreen(c1World);
+      const c2 = worldToScreen(c2World);
+      const color = '#94A3B8';
+
+      activeCtx.beginPath();
+      activeCtx.moveTo(start.x, start.y);
+      if (curveOffset === 0) {
+        activeCtx.lineTo(end.x, end.y);
+      } else {
+        activeCtx.bezierCurveTo(c1.x, c1.y, c2.x, c2.y, end.x, end.y);
+      }
+      activeCtx.strokeStyle = color;
+      activeCtx.lineWidth = 2 * renderScale;
+      activeCtx.lineCap = 'round';
+      activeCtx.stroke();
+
+      if (['forward', 'both'].includes(conn.style)) {
+        drawArrow(curveOffset === 0 ? start : c2, end, color);
+      }
+      if (['backward', 'both'].includes(conn.style)) {
+        drawArrow(curveOffset === 0 ? end : c1, start, color);
+      }
+
+      if (conn.text) {
+        const labelBox = getConnectionLabelSize(conn.text);
+        const labelWidth = labelBox.width * renderScale;
+        const labelHeight = labelBox.height * renderScale;
+        const labelX = curveOffset === 0
+          ? (startPoint.x + endPoint.x) / 2
+          : 0.125 * startPoint.x + 0.375 * c1World.x + 0.375 * c2World.x + 0.125 * endPoint.x;
+        const labelY = curveOffset === 0
+          ? (startPoint.y + endPoint.y) / 2
+          : 0.125 * startPoint.y + 0.375 * c1World.y + 0.375 * c2World.y + 0.125 * endPoint.y;
+        const labelTopLeft = worldToScreen({ x: labelX - labelWidth / (2 * renderScale), y: labelY - labelHeight / (2 * renderScale) });
+
+        activeCtx.fillStyle = 'rgba(255,255,255,0.92)';
+        drawRoundedRect(labelTopLeft.x, labelTopLeft.y, labelWidth, labelHeight, 6 * renderScale);
+        activeCtx.fill();
+        activeCtx.strokeStyle = '#E2E8F0';
+        activeCtx.lineWidth = 1 * renderScale;
+        activeCtx.stroke();
+
+        activeCtx.fillStyle = '#475569';
+        activeCtx.font = `500 ${10 * renderScale}px Inter, ui-sans-serif, system-ui, sans-serif`;
+        activeCtx.textAlign = 'center';
+        activeCtx.textBaseline = 'middle';
+        const textBlockHeight = labelBox.lines.length * CONNECTION_LABEL_LINE_HEIGHT * renderScale;
+        const firstLineY = labelTopLeft.y + (labelHeight - textBlockHeight) / 2 + CONNECTION_LABEL_LINE_HEIGHT * renderScale * 0.78;
+        labelBox.lines.forEach((line, idx) => {
+          activeCtx.fillText(line, labelTopLeft.x + labelWidth / 2, firstLineY + idx * CONNECTION_LABEL_LINE_HEIGHT * renderScale);
+        });
+      }
+    });
+
+    nodes.forEach(node => {
+      const isFocused = focused?.type === 'node' && focused.id === node.id;
+      const isSelected = selectedNodeIds.includes(node.id);
+      const nodeBox = getNodeBoxSize(node.text);
+      const nodeStyle = node.style || 'default';
+      const nodeWidth = nodeBox.width * renderScale;
+      const nodeHeight = nodeBox.height * renderScale;
+      const nodePosition = worldToScreen({ x: node.x, y: node.y });
+      const x = nodePosition.x - nodeWidth / 2;
+      const y = nodePosition.y - nodeHeight / 2;
+
+      let fill = '#ffffff';
+      let stroke = '#E2E8F0';
+      let textColor = '#334155';
+      let lineWidth = 2 * renderScale;
+      if (isFocused) {
+        switch (nodeStyle) {
+          case 'text':
+            fill = 'rgba(255,255,255,0)';
+            stroke = 'transparent';
+            textColor = '#334155';
+            lineWidth = 0;
+            break;
+          case 'note':
+            fill = '#fefce8';
+            stroke = '#fde68a';
+            textColor = '#92400e';
+            break;
+          case 'warning':
+            fill = '#ffffff';
+            stroke = '#fca5a5';
+            textColor = '#b91c1c';
+            break;
+          case 'default':
+          default:
+            fill = '#eff6ff';
+            stroke = '#3B82F6';
+            textColor = '#334155';
+            break;
+        }
+      } else if (isSelected) {
+        switch (nodeStyle) {
+          case 'text':
+            fill = 'rgba(255,255,255,0)';
+            stroke = 'rgba(59,130,246,0.5)';
+            textColor = '#334155';
+            lineWidth = 1.5 * renderScale;
+            break;
+          case 'note':
+            fill = 'rgba(254,252,232,0.8)';
+            stroke = '#fde68a';
+            textColor = '#92400e';
+            break;
+          case 'warning':
+            fill = 'rgba(254,242,242,0.6)';
+            stroke = '#fca5a5';
+            textColor = '#b91c1c';
+            break;
+          case 'default':
+          default:
+            fill = 'rgba(239,246,255,0.6)';
+            stroke = '#93C5FD';
+            textColor = '#334155';
+            break;
+        }
+      } else {
+        switch (nodeStyle) {
+          case 'text':
+            fill = 'rgba(255,255,255,0)';
+            stroke = 'transparent';
+            textColor = '#334155';
+            lineWidth = 0;
+            break;
+          case 'note':
+            fill = '#fefce8';
+            stroke = '#fde68a';
+            textColor = '#92400e';
+            break;
+          case 'warning':
+            fill = '#ffffff';
+            stroke = '#fca5a5';
+            textColor = '#b91c1c';
+            break;
+          case 'default':
+          default:
+            fill = '#ffffff';
+            stroke = '#E2E8F0';
+            textColor = '#334155';
+            break;
+        }
+      }
+
+      drawNodeShadow(nodeStyle, isFocused, isSelected);
+      activeCtx.fillStyle = fill;
+      activeCtx.strokeStyle = stroke;
+      activeCtx.lineWidth = lineWidth;
+      drawRoundedRect(x, y, nodeWidth, nodeHeight, 16 * renderScale);
+      activeCtx.fill();
+      if (lineWidth > 0) activeCtx.stroke();
+      activeCtx.shadowColor = 'transparent';
+      activeCtx.shadowBlur = 0;
+      activeCtx.shadowOffsetY = 0;
+
+      activeCtx.fillStyle = textColor;
+      activeCtx.font = `500 ${14 * renderScale}px Inter, ui-sans-serif, system-ui, sans-serif`;
+      activeCtx.textBaseline = 'top';
+      if (nodeBox.lines.length > 1) {
+        activeCtx.textAlign = 'left';
+        const textX = x + (NODE_TEXT_H_PADDING / 2) * renderScale;
+        const firstLineY = y + NODE_TEXT_V_PADDING * renderScale;
+        nodeBox.lines.forEach((line, idx) => {
+          activeCtx.fillText(line, textX, firstLineY + idx * NODE_TEXT_LINE_HEIGHT * renderScale);
+        });
+      } else {
+        activeCtx.textAlign = 'center';
+        const textX = x + nodeWidth / 2;
+        const textY = y + (nodeHeight - NODE_TEXT_LINE_HEIGHT * renderScale) / 2;
+        activeCtx.fillText(nodeBox.lines[0], textX, textY);
+      }
+    });
+
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      triggerDownload(blob, `sysmind-${new Date().toISOString().slice(0, 10)}.png`);
+    }, 'image/png');
+  }, [connections, focused?.id, focused?.type, getConnectionLabelSize, getConnectionCurveOffsetRaw, getEdgePoint, getNode, getNodeBoxSize, lastDirection, nodes, selectedNodeIds, t]);
+
   const getConnectionHandlePoints = (conn: Connection) => {
     const fromNode = getNode(conn.fromId);
     if (!fromNode) return null;
@@ -2883,6 +3322,14 @@ export default function App() {
               {t.export}
             </button>
             <button
+              onClick={(e) => { e.stopPropagation(); handleExportImage(); }}
+              title={t.exportImage}
+              className="flex items-center gap-1 px-2 py-1.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-600 text-xs font-medium"
+            >
+              <Download size={14} />
+              {t.exportImage}
+            </button>
+            <button
               onClick={(e) => { e.stopPropagation(); handleNewCanvas(); }}
               title={t.newCanvas}
               className="flex items-center gap-1 px-2 py-1.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-600 text-xs font-medium"
@@ -3239,4 +3686,3 @@ function Kbd({ label, desc }: { label: string; desc: string }) {
     </div>
   );
 }
-
