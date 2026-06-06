@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run:*)",
+      "Bash(sleep 3 && curl -s http://localhost:3000 -o /dev/null -w \"%{http_code}\")",
+      "Bash(curl:*)"
+    ]
+  }
+}

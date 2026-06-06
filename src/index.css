@@ -1,12 +1,224 @@
 @import "tailwindcss";
 
+:root {
+  --app-bg: #f8f9fa;
+  --app-grid-color: rgba(15, 23, 42, 0.04);
+  --app-panel-bg: rgba(255, 255, 255, 0.82);
+  --app-panel-border: #e2e8f0;
+  --app-panel-text: #475569;
+  --app-title-text: #0f172a;
+  --app-muted-text: #94a3b8;
+  --app-soft-muted-text: #cbd5e1;
+  --app-hover-bg: rgba(148, 163, 184, 0.12);
+  --app-badge-bg: rgba(255, 255, 255, 0.85);
+  --app-input-bg: rgba(255, 255, 255, 0.96);
+  --app-input-border: #cbd5e1;
+  --app-input-text: #334155;
+  --app-popover-bg: rgba(255, 255, 255, 0.96);
+  --app-modal-bg: #ffffff;
+  --app-modal-backdrop: rgba(15, 23, 42, 0.3);
+  --app-kbd-bg: #f1f5f9;
+  --app-kbd-border: #cbd5e1;
+  --app-kbd-text: #475569;
+}
+
+.theme-dark {
+  --app-bg: #0f172a;
+  --app-grid-color: rgba(148, 163, 184, 0.12);
+  --app-panel-bg: rgba(15, 23, 42, 0.82);
+  --app-panel-border: rgba(148, 163, 184, 0.18);
+  --app-panel-text: #cbd5e1;
+  --app-title-text: #f8fafc;
+  --app-muted-text: #94a3b8;
+  --app-soft-muted-text: #64748b;
+  --app-hover-bg: rgba(148, 163, 184, 0.14);
+  --app-badge-bg: rgba(15, 23, 42, 0.88);
+  --app-input-bg: rgba(15, 23, 42, 0.96);
+  --app-input-border: rgba(148, 163, 184, 0.22);
+  --app-input-text: #e2e8f0;
+  --app-popover-bg: rgba(15, 23, 42, 0.97);
+  --app-modal-bg: #111827;
+  --app-modal-backdrop: rgba(2, 6, 23, 0.6);
+  --app-kbd-bg: rgba(30, 41, 59, 0.95);
+  --app-kbd-border: rgba(148, 163, 184, 0.22);
+  --app-kbd-text: #cbd5e1;
+}
+
 /* Prevent browser gestures on the canvas */
 html, body {
   overscroll-behavior: none;
   touch-action: none;
+  background: var(--app-bg);
 }
 
 /* Allow touch actions on inputs */
 input, textarea {
   touch-action: auto;
+}
+
+.app-shell {
+  background: var(--app-bg);
+  color: var(--app-panel-text);
+}
+
+.app-grid {
+  color: var(--app-grid-color);
+}
+
+.app-grid[style] {
+  background-image: radial-gradient(currentColor 1px, transparent 0) !important;
+}
+
+.app-panel,
+.app-shortcut-group,
+.app-kbd-row,
+.app-popover,
+.app-modal,
+.app-badge {
+  background: var(--app-panel-bg);
+  border-color: var(--app-panel-border);
+}
+
+.app-popover,
+.app-modal {
+  background: var(--app-popover-bg);
+}
+
+.app-modal {
+  background: var(--app-modal-bg);
+}
+
+.app-badge {
+  background: var(--app-badge-bg);
+}
+
+.app-title,
+.app-modal-title {
+  color: var(--app-title-text);
+}
+
+.app-label,
+.app-kbd-desc,
+.app-icon-muted,
+.app-empty-title,
+.app-empty-subtitle,
+.app-node-placeholder {
+  color: var(--app-muted-text);
+}
+
+.app-empty-subtitle {
+  color: var(--app-soft-muted-text);
+}
+
+.app-button,
+.app-row-label,
+.app-shortcut-group,
+.app-kbd-row,
+.app-input,
+.app-node-editor,
+.app-connection-editor,
+.app-settings-section,
+.app-settings-heading,
+.app-badge,
+.app-panel {
+  color: var(--app-panel-text);
+}
+
+.app-button:hover,
+.app-search-item:hover {
+  background: var(--app-hover-bg);
+}
+
+.app-segment-button {
+  color: var(--app-panel-text);
+}
+
+.app-segment-active {
+  background: #0f172a;
+  color: #ffffff;
+}
+
+.theme-dark .app-segment-active {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.app-divider {
+  border-color: var(--app-panel-border);
+}
+
+.app-input {
+  background: transparent;
+  color: var(--app-input-text);
+}
+
+.app-input::placeholder,
+.theme-dark .app-shell textarea::placeholder {
+  color: var(--app-muted-text);
+}
+
+.app-popover-header,
+.app-modal-header,
+.app-modal-instructions,
+.app-modal-footer {
+  border-color: var(--app-panel-border);
+}
+
+.app-settings-section {
+  background: color-mix(in srgb, var(--app-panel-bg) 78%, transparent);
+  border-color: var(--app-panel-border);
+}
+
+.app-modal-backdrop {
+  background: var(--app-modal-backdrop);
+}
+
+.app-kbd {
+  background: var(--app-kbd-bg);
+  border-color: var(--app-kbd-border);
+  color: var(--app-kbd-text);
+}
+
+.app-node-editor,
+.app-connection-editor {
+  background: var(--app-input-bg);
+  border-color: #3b82f6;
+  color: var(--app-input-text);
+}
+
+.app-node-editor::placeholder,
+.app-connection-editor::placeholder {
+  color: var(--app-muted-text);
+}
+
+.theme-dark .app-search-item-active {
+  background: rgba(59, 130, 246, 0.18);
+  color: #93c5fd;
+}
+
+.theme-dark .app-shortcut-row:not(.bg-red-50):not(.bg-blue-50) {
+  background: rgba(15, 23, 42, 0.55);
+  border-color: rgba(148, 163, 184, 0.14);
+}
+
+.theme-dark .app-shortcut-chip:not(.bg-blue-500):not(.bg-red-100) {
+  background: rgba(15, 23, 42, 0.96);
+  border-color: rgba(148, 163, 184, 0.22);
+  color: #cbd5e1;
+}
+
+.theme-dark .app-settings-section {
+  background: rgba(15, 23, 42, 0.55);
+  border-color: rgba(148, 163, 184, 0.18);
+}
+
+.theme-dark .app-shell textarea,
+.theme-dark .app-shell input:not([type="file"]) {
+  background: var(--app-input-bg);
+  border-color: var(--app-input-border);
+  color: var(--app-input-text);
+}
+
+.theme-dark .app-accent-icon {
+  color: #60a5fa;
 }

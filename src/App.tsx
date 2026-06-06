@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, ArrowRight, ArrowLeft, ArrowLeftRight, Minus, Trash2, MousePointer2, Download, Upload, Save, FilePlus2, ChevronDown, ChevronUp, Settings } from 'lucide-react';
+import { Search, ArrowRight, ArrowLeft, ArrowLeftRight, Minus, Trash2, MousePointer2, Download, Upload, Save, FilePlus2, ChevronDown, ChevronUp, Settings, Sun, Moon } from 'lucide-react';
 
 import { Node, Connection, ConnectionStyle, NodeStyle, FocusedElement, KeyboardShortcuts, DEFAULT_SHORTCUTS } from './types';
 
@@ -32,6 +32,7 @@ const ZOOM_STEP = 0.1;
 const MIN_SCALE = 0.4;
 const MAX_SCALE = 2.5;
 const LANGUAGE_STORAGE_KEY = 'sysmind-language';
+const THEME_STORAGE_KEY = 'sysmind-theme';
 
 
 const measureText = (text: string, font: string) => {
@@ -248,6 +249,11 @@ const TRANSLATIONS = {
     language: '语言',
     languageZh: '中文',
     languageEn: '英文',
+    theme: '主题',
+    lightMode: '浅色',
+    darkMode: '深色',
+    appearanceSettings: '外观设置',
+    shortcutsSection: '快捷键设置',
     shortcutsSettings: '快捷键设置',
     shortcutAction: '操作',
     shortcutKey: '快捷键',
@@ -337,6 +343,11 @@ const TRANSLATIONS = {
     language: 'Language',
     languageZh: '中文',
     languageEn: 'English',
+    theme: 'Theme',
+    lightMode: 'Light',
+    darkMode: 'Dark',
+    appearanceSettings: 'Appearance',
+    shortcutsSection: 'Shortcuts',
     shortcutsSettings: 'Keyboard Shortcuts',
     shortcutAction: 'Action',
     shortcutKey: 'Shortcut',
@@ -396,6 +407,15 @@ export default function App() {
       // Ignore localStorage access failures and fall back to browser language.
     }
     return navigator.language.startsWith('zh') ? 'zh' : 'en';
+  });
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    try {
+      const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
+      if (savedTheme === 'light' || savedTheme === 'dark') return savedTheme;
+    } catch {
+      // Ignore localStorage access failures and fall back to system preference.
+    }
+    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   });
   const [nodes, setNodes] = useState<Node[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
@@ -489,6 +509,24 @@ export default function App() {
   const ctrlKey = isMac ? 'Cmd' : 'Ctrl';
 
   const t = useMemo(() => TRANSLATIONS[language], [language]);
+  const isDarkTheme = theme === 'dark';
+  const themeColors = useMemo(() => ({
+    canvasBackground: isDarkTheme ? '#0f172a' : '#f8fafc',
+    canvasGrid: isDarkTheme ? 'rgba(148,163,184,0.12)' : 'rgba(15,23,42,0.04)',
+    canvasHintTitle: isDarkTheme ? '#94a3b8' : '#94a3b8',
+    canvasHintSubtitle: isDarkTheme ? '#64748b' : '#cbd5e1',
+    connectionBase: isDarkTheme ? '#64748b' : '#94a3b8',
+    connectionSelected: '#60a5fa',
+    connectionFocused: isDarkTheme ? '#93c5fd' : '#3b82f6',
+    handleStroke: isDarkTheme ? '#0f172a' : '#ffffff',
+    labelBackground: isDarkTheme ? 'rgba(15,23,42,0.92)' : 'rgba(255,255,255,0.92)',
+    labelBorder: isDarkTheme ? 'rgba(148,163,184,0.24)' : '#E2E8F0',
+    labelText: isDarkTheme ? '#E2E8F0' : '#475569',
+    nodePlaceholder: isDarkTheme ? '#64748b' : '#cbd5e1',
+    shadowFocused: isDarkTheme ? 'rgba(2, 6, 23, 0.5)' : 'rgba(15, 23, 42, 0.22)',
+    shadowSelected: isDarkTheme ? 'rgba(2, 6, 23, 0.4)' : 'rgba(15, 23, 42, 0.16)',
+    shadowBase: isDarkTheme ? 'rgba(2, 6, 23, 0.32)' : 'rgba(15, 23, 42, 0.12)',
+  }), [isDarkTheme]);
   const commonShortcutHints = useMemo(() => ({
     title: t.commonActions,
     items: [
@@ -586,6 +624,15 @@ export default function App() {
     }
     document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en';
   }, [language]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+      // Ignore localStorage access failures.
+    }
+    document.documentElement.style.colorScheme = theme;
+  }, [theme]);
 
 
 
@@ -1964,11 +2011,11 @@ export default function App() {
 
     if (isPinchZoom && hasDeltaY) {
       // Touchpad pinch zoom (macOS sends ctrlKey + deltaY)
-      const delta = -wheelEvent.deltaY;
-      const zoomFactor = delta > 0 ? 1 + ZOOM_STEP : 1 - ZOOM_STEP;
+      // Use exponential scaling for smooth, proportional zoom
+      const zoomFactor = Math.exp(-wheelEvent.deltaY * 0.01);
 
       setCanvasView(prev => {
-        const nextScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, Number((prev.scale * zoomFactor).toFixed(2))));
+        const nextScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, Number((prev.scale * zoomFactor).toFixed(3))));
         if (nextScale === prev.scale) return prev;
 
         // Zoom towards pointer position
@@ -2288,18 +2335,18 @@ export default function App() {
         return;
       }
       if (isFocused) {
-        activeCtx.shadowColor = 'rgba(15, 23, 42, 0.22)';
+        activeCtx.shadowColor = themeColors.shadowFocused;
         activeCtx.shadowBlur = 18 * renderScale;
         activeCtx.shadowOffsetY = 4 * renderScale;
         return;
       }
       if (isSelected) {
-        activeCtx.shadowColor = 'rgba(15, 23, 42, 0.16)';
+        activeCtx.shadowColor = themeColors.shadowSelected;
         activeCtx.shadowBlur = 12 * renderScale;
         activeCtx.shadowOffsetY = 3 * renderScale;
         return;
       }
-      activeCtx.shadowColor = 'rgba(15, 23, 42, 0.12)';
+      activeCtx.shadowColor = themeColors.shadowBase;
       activeCtx.shadowBlur = 8 * renderScale;
       activeCtx.shadowOffsetY = 2 * renderScale;
     };
@@ -2331,19 +2378,20 @@ export default function App() {
       if (!emptyExport) return;
 
       const { ctx } = emptyExport;
-      ctx.fillStyle = '#f8fafc';
+      ctx.fillStyle = themeColors.canvasBackground;
       ctx.fillRect(0, 0, emptyExport.width, emptyExport.height);
-      ctx.fillStyle = 'rgba(15,23,42,0.04)';
+      ctx.fillStyle = themeColors.canvasGrid;
       for (let x = 0; x <= emptyExport.width; x += GRID_SIZE) {
         for (let y = 0; y <= emptyExport.height; y += GRID_SIZE) {
           ctx.fillRect(x, y, 1, 1);
         }
       }
-      ctx.fillStyle = '#475569';
+      ctx.fillStyle = themeColors.canvasHintTitle;
       ctx.font = '700 28px Inter, ui-sans-serif, system-ui, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(t.stormSystemTitle, emptyExport.width / 2, emptyExport.height / 2 - 12);
+      ctx.fillStyle = themeColors.canvasHintSubtitle;
       ctx.font = '500 20px Inter, ui-sans-serif, system-ui, sans-serif';
       ctx.fillText(t.emptyHint, emptyExport.width / 2, emptyExport.height / 2 + 28);
       canvas.toBlob((blob) => {
@@ -2442,10 +2490,10 @@ export default function App() {
       y: (point.y - minY) * renderScale + exportPadding,
     });
 
-    activeCtx.fillStyle = '#f8fafc';
+    activeCtx.fillStyle = themeColors.canvasBackground;
     activeCtx.fillRect(0, 0, width, height);
 
-    activeCtx.fillStyle = 'rgba(15,23,42,0.04)';
+    activeCtx.fillStyle = themeColors.canvasGrid;
     const gridStartX = exportPadding - ((((minX % GRID_SIZE) + GRID_SIZE) % GRID_SIZE) * renderScale);
     const gridStartY = exportPadding - ((((minY % GRID_SIZE) + GRID_SIZE) % GRID_SIZE) * renderScale);
     for (let x = gridStartX; x <= width; x += GRID_SIZE) {
@@ -2488,7 +2536,7 @@ export default function App() {
       const end = worldToScreen(endPoint);
       const c1 = worldToScreen(c1World);
       const c2 = worldToScreen(c2World);
-      const color = '#94A3B8';
+      const color = themeColors.connectionBase;
 
       activeCtx.beginPath();
       activeCtx.moveTo(start.x, start.y);
@@ -2521,14 +2569,14 @@ export default function App() {
           : 0.125 * startPoint.y + 0.375 * c1World.y + 0.375 * c2World.y + 0.125 * endPoint.y;
         const labelTopLeft = worldToScreen({ x: labelX - labelWidth / (2 * renderScale), y: labelY - labelHeight / (2 * renderScale) });
 
-        activeCtx.fillStyle = 'rgba(255,255,255,0.92)';
+        activeCtx.fillStyle = themeColors.labelBackground;
         drawRoundedRect(labelTopLeft.x, labelTopLeft.y, labelWidth, labelHeight, 6 * renderScale);
         activeCtx.fill();
-        activeCtx.strokeStyle = '#E2E8F0';
+        activeCtx.strokeStyle = themeColors.labelBorder;
         activeCtx.lineWidth = 1 * renderScale;
         activeCtx.stroke();
 
-        activeCtx.fillStyle = '#475569';
+        activeCtx.fillStyle = themeColors.labelText;
         activeCtx.font = `500 ${10 * renderScale}px Inter, ui-sans-serif, system-ui, sans-serif`;
         activeCtx.textAlign = 'center';
         activeCtx.textBaseline = 'middle';
@@ -2551,58 +2599,58 @@ export default function App() {
       const x = nodePosition.x - nodeWidth / 2;
       const y = nodePosition.y - nodeHeight / 2;
 
-      let fill = '#ffffff';
-      let stroke = '#E2E8F0';
-      let textColor = '#334155';
+      let fill = isDarkTheme ? '#111827' : '#ffffff';
+      let stroke = isDarkTheme ? 'rgba(148,163,184,0.18)' : '#E2E8F0';
+      let textColor = isDarkTheme ? '#E2E8F0' : '#334155';
       let lineWidth = 2 * renderScale;
       if (isFocused) {
         switch (nodeStyle) {
           case 'text':
             fill = 'rgba(255,255,255,0)';
             stroke = 'transparent';
-            textColor = '#334155';
+            textColor = isDarkTheme ? '#E2E8F0' : '#334155';
             lineWidth = 0;
             break;
           case 'note':
-            fill = '#fefce8';
-            stroke = '#fde68a';
-            textColor = '#92400e';
+            fill = isDarkTheme ? '#422006' : '#fefce8';
+            stroke = isDarkTheme ? '#facc15' : '#fde68a';
+            textColor = isDarkTheme ? '#fef3c7' : '#92400e';
             break;
           case 'warning':
-            fill = '#ffffff';
-            stroke = '#fca5a5';
-            textColor = '#b91c1c';
+            fill = isDarkTheme ? '#3f0f12' : '#ffffff';
+            stroke = isDarkTheme ? '#f87171' : '#fca5a5';
+            textColor = isDarkTheme ? '#fecaca' : '#b91c1c';
             break;
           case 'default':
           default:
-            fill = '#eff6ff';
-            stroke = '#3B82F6';
-            textColor = '#334155';
+            fill = isDarkTheme ? '#0f2746' : '#eff6ff';
+            stroke = isDarkTheme ? '#60a5fa' : '#3B82F6';
+            textColor = isDarkTheme ? '#dbeafe' : '#334155';
             break;
         }
       } else if (isSelected) {
         switch (nodeStyle) {
           case 'text':
             fill = 'rgba(255,255,255,0)';
-            stroke = 'rgba(59,130,246,0.5)';
-            textColor = '#334155';
+            stroke = isDarkTheme ? 'rgba(96,165,250,0.65)' : 'rgba(59,130,246,0.5)';
+            textColor = isDarkTheme ? '#E2E8F0' : '#334155';
             lineWidth = 1.5 * renderScale;
             break;
           case 'note':
-            fill = 'rgba(254,252,232,0.8)';
-            stroke = '#fde68a';
-            textColor = '#92400e';
+            fill = isDarkTheme ? 'rgba(120,53,15,0.82)' : 'rgba(254,252,232,0.8)';
+            stroke = isDarkTheme ? '#facc15' : '#fde68a';
+            textColor = isDarkTheme ? '#fef3c7' : '#92400e';
             break;
           case 'warning':
-            fill = 'rgba(254,242,242,0.6)';
-            stroke = '#fca5a5';
-            textColor = '#b91c1c';
+            fill = isDarkTheme ? 'rgba(127,29,29,0.72)' : 'rgba(254,242,242,0.6)';
+            stroke = isDarkTheme ? '#f87171' : '#fca5a5';
+            textColor = isDarkTheme ? '#fecaca' : '#b91c1c';
             break;
           case 'default':
           default:
-            fill = 'rgba(239,246,255,0.6)';
-            stroke = '#93C5FD';
-            textColor = '#334155';
+            fill = isDarkTheme ? 'rgba(30,64,175,0.42)' : 'rgba(239,246,255,0.6)';
+            stroke = isDarkTheme ? '#60a5fa' : '#93C5FD';
+            textColor = isDarkTheme ? '#dbeafe' : '#334155';
             break;
         }
       } else {
@@ -2610,24 +2658,24 @@ export default function App() {
           case 'text':
             fill = 'rgba(255,255,255,0)';
             stroke = 'transparent';
-            textColor = '#334155';
+            textColor = isDarkTheme ? '#E2E8F0' : '#334155';
             lineWidth = 0;
             break;
           case 'note':
-            fill = '#fefce8';
-            stroke = '#fde68a';
-            textColor = '#92400e';
+            fill = isDarkTheme ? '#2b1d07' : '#fefce8';
+            stroke = isDarkTheme ? '#a16207' : '#fde68a';
+            textColor = isDarkTheme ? '#fef3c7' : '#92400e';
             break;
           case 'warning':
-            fill = '#ffffff';
-            stroke = '#fca5a5';
-            textColor = '#b91c1c';
+            fill = isDarkTheme ? '#1f1114' : '#ffffff';
+            stroke = isDarkTheme ? '#b91c1c' : '#fca5a5';
+            textColor = isDarkTheme ? '#fca5a5' : '#b91c1c';
             break;
           case 'default':
           default:
-            fill = '#ffffff';
-            stroke = '#E2E8F0';
-            textColor = '#334155';
+            fill = isDarkTheme ? '#111827' : '#ffffff';
+            stroke = isDarkTheme ? 'rgba(148,163,184,0.18)' : '#E2E8F0';
+            textColor = isDarkTheme ? '#E2E8F0' : '#334155';
             break;
         }
       }
@@ -2665,7 +2713,7 @@ export default function App() {
       if (!blob) return;
       triggerDownload(blob, `sysmind-${new Date().toISOString().slice(0, 10)}.png`);
     }, 'image/png');
-  }, [connections, focused?.id, focused?.type, getConnectionLabelSize, getConnectionCurveOffsetRaw, getEdgePoint, getNode, getNodeBoxSize, lastDirection, nodes, selectedNodeIds, t]);
+  }, [connections, focused?.id, focused?.type, getConnectionLabelSize, getConnectionCurveOffsetRaw, getEdgePoint, getNode, getNodeBoxSize, isDarkTheme, lastDirection, nodes, selectedNodeIds, t, themeColors]);
 
   const getConnectionHandlePoints = (conn: Connection) => {
     const fromNode = getNode(conn.fromId);
@@ -2769,7 +2817,8 @@ export default function App() {
   return (
 
     <div
-      className="w-full h-screen bg-[#F8F9FA] overflow-hidden relative font-sans select-none"
+      ref={canvasRef}
+      className={`app-shell theme-${theme} w-full h-screen overflow-hidden relative font-sans select-none`}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={() => setHoveredEndpoint(null)}
@@ -2778,7 +2827,7 @@ export default function App() {
     >
       {/* Grid Pattern */}
       <div 
-        className="absolute inset-0 pointer-events-none opacity-[0.03]"
+        className="app-grid absolute inset-0 pointer-events-none opacity-[0.03]"
         style={{
           backgroundImage: `radial-gradient(#000 1px, transparent 0)`,
           backgroundSize: `${GRID_SIZE}px ${GRID_SIZE}px`,
@@ -2796,10 +2845,10 @@ export default function App() {
             transition={{ duration: 0.4 }}
             className="absolute inset-0 flex flex-col items-center justify-center gap-2 pointer-events-none"
           >
-            <span className="text-base font-semibold text-slate-400 select-none tracking-wide">
+            <span className="app-empty-title text-base font-semibold text-slate-400 select-none tracking-wide" style={{ color: themeColors.canvasHintTitle }}>
               {t.stormSystemTitle}
             </span>
-            <span className="text-2xl font-medium text-slate-300 select-none tracking-wide">
+            <span className="app-empty-subtitle text-2xl font-medium text-slate-300 select-none tracking-wide" style={{ color: themeColors.canvasHintSubtitle }}>
               {t.emptyHint}
             </span>
 
@@ -2817,16 +2866,16 @@ export default function App() {
         <svg className="absolute inset-0 w-[5000px] h-[5000px] pointer-events-none overflow-visible">
           <defs>
             <marker id="arrowhead-end" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto" markerUnits="strokeWidth">
-              <path d="M 5 2.5 L 11 6 L 5 9.5" fill="none" stroke="#94A3B8" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M 5 2.5 L 11 6 L 5 9.5" fill="none" stroke={themeColors.connectionBase} strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
             </marker>
             <marker id="arrowhead-start" markerWidth="12" markerHeight="12" refX="1" refY="6" orient="auto" markerUnits="strokeWidth">
-              <path d="M 7 2.5 L 1 6 L 7 9.5" fill="none" stroke="#94A3B8" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M 7 2.5 L 1 6 L 7 9.5" fill="none" stroke={themeColors.connectionBase} strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
             </marker>
             <marker id="arrowhead-end-focused" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto" markerUnits="strokeWidth">
-              <path d="M 5 2.5 L 11 6 L 5 9.5" fill="none" stroke="#3B82F6" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M 5 2.5 L 11 6 L 5 9.5" fill="none" stroke={themeColors.connectionFocused} strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
             </marker>
             <marker id="arrowhead-start-focused" markerWidth="12" markerHeight="12" refX="1" refY="6" orient="auto" markerUnits="strokeWidth">
-              <path d="M 7 2.5 L 1 6 L 7 9.5" fill="none" stroke="#3B82F6" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M 7 2.5 L 1 6 L 7 9.5" fill="none" stroke={themeColors.connectionFocused} strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
             </marker>
           </defs>
           {connections.map(conn => {
@@ -2896,7 +2945,7 @@ export default function App() {
             const showCurveControlHandle = centerLen > 0 && (isSelected || isDraggingCurveControl) && !draggingEndpoint;
             const curveControlX = (rawStartX + rawEndX) / 2 + normalX * curveOffset * 0.75;
             const curveControlY = (rawStartY + rawEndY) / 2 + normalY * curveOffset * 0.75;
-            const color = isFocused ? '#3B82F6' : (isSelected ? '#60A5FA' : '#94A3B8');
+            const color = isFocused ? themeColors.connectionFocused : (isSelected ? themeColors.connectionSelected : themeColors.connectionBase);
             const strokeWidth = isFocused ? 3 : (isSelected ? 2.5 : 2);
 
 
@@ -2951,8 +3000,8 @@ export default function App() {
                       cx={curveControlX}
                       cy={curveControlY}
                       r={7}
-                      fill={isFocused ? '#3B82F6' : '#60A5FA'}
-                      stroke="#FFFFFF"
+                      fill={isFocused ? themeColors.connectionFocused : themeColors.connectionSelected}
+                      stroke={themeColors.handleStroke}
                       strokeWidth={1.5}
                       onMouseDown={(e) => handleConnectionCurveControlMouseDown(e, conn.id)}
                       className="cursor-grab"
@@ -2974,8 +3023,8 @@ export default function App() {
                       cx={startX}
                       cy={startY}
                       r={8}
-                      fill={isFocused ? '#3B82F6' : '#94A3B8'}
-                      stroke="#FFFFFF"
+                      fill={isFocused ? themeColors.connectionFocused : themeColors.connectionBase}
+                      stroke={themeColors.handleStroke}
                       strokeWidth={1.5}
                       onMouseDown={(e) => handleConnectionEndpointMouseDown(e, conn.id, 'start')}
                       className="cursor-grab"
@@ -2996,8 +3045,8 @@ export default function App() {
                       cx={endX}
                       cy={endY}
                       r={8}
-                      fill={isFocused ? '#3B82F6' : '#94A3B8'}
-                      stroke="#FFFFFF"
+                      fill={isFocused ? themeColors.connectionFocused : themeColors.connectionBase}
+                      stroke={themeColors.handleStroke}
                       strokeWidth={1.5}
                       onMouseDown={(e) => handleConnectionEndpointMouseDown(e, conn.id, 'end')}
                       className="cursor-grab"
@@ -3016,15 +3065,15 @@ export default function App() {
                       width={labelWidth}
                       height={labelHeight}
                       rx={6}
-                      fill="rgba(255,255,255,0.92)"
-                      stroke="#E2E8F0"
+                      fill={themeColors.labelBackground}
+                      stroke={themeColors.labelBorder}
                     />
                     <text
                       x={labelXRounded}
                       textAnchor="middle"
                       fontSize="10"
                       fontWeight="500"
-                      fill="#475569"
+                      fill={themeColors.labelText}
                       style={{ userSelect: 'none' }}
                     >
                       {labelLines.map((line, idx) => (
@@ -3053,7 +3102,7 @@ export default function App() {
                       <textarea
                         ref={inputRef}
                         rows={Math.max(1, labelLines.length)}
-                        className={`absolute inset-0 w-full h-full bg-white border-2 border-blue-500 rounded px-1 py-1 text-[10px] font-medium text-slate-600 text-center outline-none shadow-lg transition-opacity z-10 resize-none overflow-hidden leading-[14px]
+                        className={`app-connection-editor absolute inset-0 w-full h-full border-2 rounded px-1 py-1 text-[10px] font-medium text-center outline-none shadow-lg transition-opacity z-10 resize-none overflow-hidden leading-[14px]
                           ${isEditing ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
 
                         value={conn.text}
@@ -3087,6 +3136,45 @@ export default function App() {
 
           // Define styles for different node types
           const getNodeStyleClasses = (style: NodeStyle, focused: boolean, selected: boolean) => {
+            if (isDarkTheme) {
+              if (focused) {
+                switch (style) {
+                  case 'text':
+                    return 'bg-transparent border-transparent shadow-none';
+                  case 'note':
+                    return 'bg-amber-950/90 border-amber-400 shadow-lg z-20';
+                  case 'warning':
+                    return 'bg-rose-950/80 border-rose-400 shadow-lg z-20 ring-2 ring-rose-500/20';
+                  case 'default':
+                  default:
+                    return 'bg-blue-950/80 border-blue-400 shadow-lg z-20';
+                }
+              }
+              if (selected) {
+                switch (style) {
+                  case 'text':
+                    return 'bg-transparent border-blue-400/60 shadow-none z-[15]';
+                  case 'note':
+                    return 'bg-amber-950/70 border-amber-500/80 shadow-md z-[15]';
+                  case 'warning':
+                    return 'bg-rose-950/60 border-rose-400/80 shadow-md z-[15]';
+                  case 'default':
+                  default:
+                    return 'bg-blue-950/55 border-blue-400/80 shadow-md z-[15]';
+                }
+              }
+              switch (style) {
+                case 'text':
+                  return 'bg-transparent border-transparent shadow-none hover:bg-slate-800/35';
+                case 'note':
+                  return 'bg-amber-950/50 border-amber-700 shadow-sm hover:border-amber-500';
+                case 'warning':
+                  return 'bg-rose-950/35 border-rose-800 shadow-sm hover:border-rose-500';
+                case 'default':
+                default:
+                  return 'bg-slate-900/85 border-slate-700 shadow-sm hover:border-slate-500';
+              }
+            }
             if (focused) {
               switch (style) {
                 case 'text':
@@ -3128,6 +3216,19 @@ export default function App() {
           };
 
           const getTextClasses = (style: NodeStyle) => {
+            if (isDarkTheme) {
+              switch (style) {
+                case 'text':
+                  return 'text-slate-200';
+                case 'note':
+                  return 'text-amber-100';
+                case 'warning':
+                  return 'text-rose-200 font-semibold';
+                case 'default':
+                default:
+                  return 'text-slate-100';
+              }
+            }
             switch (style) {
               case 'text':
                 return 'text-slate-700';
@@ -3167,7 +3268,7 @@ export default function App() {
                 <textarea
                   ref={inputRef}
                   rows={Math.max(1, nodeLines.length)}
-                  className={`absolute inset-0 w-full h-full bg-white rounded-xl outline-none px-2 py-2 text-sm font-medium text-slate-800 transition-opacity z-10 resize-none overflow-hidden leading-[18px] ${textAlignClass}
+                  className={`app-node-editor absolute inset-0 w-full h-full rounded-xl outline-none px-2 py-2 text-sm font-medium transition-opacity z-10 resize-none overflow-hidden leading-[18px] ${textAlignClass}
                     ${isEditing ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
 
                   value={node.text}
@@ -3185,7 +3286,7 @@ export default function App() {
               )}
               {!(isFocused && isEditing) && (
                 <span className={`text-sm font-medium whitespace-pre-wrap break-words px-2 relative z-0 w-full ${textAlignClass} ${getTextClasses(nodeStyle)}`}>
-                  {node.text || <span className="text-slate-300 italic">{t.newNode}</span>}
+                  {node.text || <span className="app-node-placeholder italic">{t.newNode}</span>}
                 </span>
               )}
             </motion.div>
@@ -3245,8 +3346,8 @@ export default function App() {
                   cx={endPoint.x}
                   cy={endPoint.y}
                   r={8}
-                  fill={isFocused ? '#3B82F6' : '#94A3B8'}
-                  stroke="#FFFFFF"
+                  fill={isFocused ? themeColors.connectionFocused : themeColors.connectionBase}
+                  stroke={themeColors.handleStroke}
                   strokeWidth={1.5}
                   onMouseDown={(e) => handleConnectionEndpointMouseDown(e, conn.id, 'end')}
                   className="cursor-grab"
@@ -3279,13 +3380,13 @@ export default function App() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
             onMouseDown={(e) => e.stopPropagation()}
-            className="absolute bottom-12 left-1/2 -translate-x-1/2 w-80 bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden z-50"
+            className="app-popover absolute bottom-12 left-1/2 -translate-x-1/2 w-80 bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden z-50"
           >
-            <div className="p-3 border-bottom border-slate-100 flex items-center gap-2">
-              <Search size={16} className="text-slate-400" />
+            <div className="app-popover-header p-3 border-bottom border-slate-100 flex items-center gap-2">
+              <Search size={16} className="app-icon-muted text-slate-400" />
               <input
                 ref={searchInputRef}
-                className="flex-1 outline-none text-sm text-slate-700"
+                className="app-input flex-1 outline-none text-sm text-slate-700"
                 placeholder={t.searchPlaceholder}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
@@ -3296,7 +3397,7 @@ export default function App() {
                 searchResults.map((node, idx) => (
                   <div
                     key={node.id}
-                    className={`px-4 py-2 text-sm cursor-pointer flex items-center justify-between ${idx === selectedIndex ? 'bg-blue-50 text-blue-600' : 'text-slate-600 hover:bg-slate-50'}`}
+                    className={`app-search-item px-4 py-2 text-sm cursor-pointer flex items-center justify-between ${idx === selectedIndex ? 'app-search-item-active bg-blue-50 text-blue-600' : 'text-slate-600 hover:bg-slate-50'}`}
                     onClick={() => {
                       if (focused?.type === 'connection') {
                         const pendingConn = getConnection(focused.id);
@@ -3312,7 +3413,7 @@ export default function App() {
                   </div>
                 ))
               ) : (
-                <div className="px-4 py-8 text-center text-slate-400 text-xs">
+                <div className="app-icon-muted px-4 py-8 text-center text-slate-400 text-xs">
                   {t.noNodesFound}
                 </div>
               )}
@@ -3322,7 +3423,7 @@ export default function App() {
       </AnimatePresence>
 
       {loadedFileMeta && (
-        <div onMouseDown={(e) => e.stopPropagation()} className="absolute top-6 right-6 max-w-[420px] bg-white/85 backdrop-blur-sm border border-slate-200 rounded-xl shadow-sm px-3 py-1.5 text-xs text-slate-700 font-medium truncate z-40">
+        <div onMouseDown={(e) => e.stopPropagation()} className="app-badge absolute top-6 right-6 max-w-[420px] bg-white/85 backdrop-blur-sm border border-slate-200 rounded-xl shadow-sm px-3 py-1.5 text-xs text-slate-700 font-medium truncate z-40">
           {loadedFileMeta.name}
         </div>
       )}
@@ -3333,16 +3434,16 @@ export default function App() {
         <div className="flex items-center gap-6 pointer-events-auto">
 
 
-          <h1 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-            <MousePointer2 className="text-blue-500" /> SysMind
+          <h1 className="app-title text-xl font-bold text-slate-800 flex items-center gap-2">
+            <MousePointer2 className="app-accent-icon text-blue-500" /> SysMind
           </h1>
 
-          <div className="flex items-center gap-1 bg-white/80 backdrop-blur-sm border border-slate-200 p-1 rounded-xl shadow-sm">
+          <div className="app-panel flex items-center gap-1 bg-white/80 backdrop-blur-sm border border-slate-200 p-1 rounded-xl shadow-sm">
             <button 
               onClick={(e) => { e.stopPropagation(); undo(); }}
               disabled={history.index <= 0}
               title={t.undo}
-              className="p-1.5 hover:bg-slate-100 rounded-lg disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-slate-600"
+              className="app-button p-1.5 hover:bg-slate-100 rounded-lg disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-slate-600"
             >
               <ArrowLeft size={16} />
             </button>
@@ -3350,20 +3451,20 @@ export default function App() {
               onClick={(e) => { e.stopPropagation(); redo(); }}
               disabled={history.index >= history.stack.length - 1}
               title={t.redo}
-              className="p-1.5 hover:bg-slate-100 rounded-lg disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-slate-600"
+              className="app-button p-1.5 hover:bg-slate-100 rounded-lg disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-slate-600"
             >
               <ArrowRight size={16} />
             </button>
           </div>
-          <div className="flex items-center gap-1 bg-white/80 backdrop-blur-sm border border-slate-200 p-1 rounded-xl shadow-sm">
-            <div className="flex items-center gap-1 pr-1 mr-1 border-r border-slate-200">
-              <span className="px-2 text-[11px] font-semibold text-slate-500">{t.language}</span>
+        <div className="app-panel flex items-center gap-1 bg-white/80 backdrop-blur-sm border border-slate-200 p-1 rounded-xl shadow-sm">
+            <div className="app-divider flex items-center gap-1 pr-1 mr-1 border-r border-slate-200">
+              <span className="app-label px-2 text-[11px] font-semibold text-slate-500">{t.language}</span>
               <button
                 onClick={(e) => { e.stopPropagation(); setLanguage('zh'); }}
                 title={t.languageZh}
-                className={`px-2.5 py-1.5 rounded-lg transition-colors text-xs font-medium ${
+                className={`app-segment-button px-2.5 py-1.5 rounded-lg transition-colors text-xs font-medium ${
                   language === 'zh'
-                    ? 'bg-slate-900 text-white'
+                    ? 'app-segment-active bg-slate-900 text-white'
                     : 'text-slate-600 hover:bg-slate-100'
                 }`}
               >
@@ -3372,9 +3473,9 @@ export default function App() {
               <button
                 onClick={(e) => { e.stopPropagation(); setLanguage('en'); }}
                 title={t.languageEn}
-                className={`px-2.5 py-1.5 rounded-lg transition-colors text-xs font-medium ${
+                className={`app-segment-button px-2.5 py-1.5 rounded-lg transition-colors text-xs font-medium ${
                   language === 'en'
-                    ? 'bg-slate-900 text-white'
+                    ? 'app-segment-active bg-slate-900 text-white'
                     : 'text-slate-600 hover:bg-slate-100'
                 }`}
               >
@@ -3384,7 +3485,7 @@ export default function App() {
             <button
               onClick={(e) => { e.stopPropagation(); handleImportFromPicker(); }}
               title={t.import}
-              className="flex items-center gap-1 px-2 py-1.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-600 text-xs font-medium"
+              className="app-button flex items-center gap-1 px-2 py-1.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-600 text-xs font-medium"
             >
               <Upload size={14} />
               {t.import}
@@ -3392,7 +3493,7 @@ export default function App() {
             <button
               onClick={(e) => { e.stopPropagation(); handleExport(); }}
               title={t.export}
-              className="flex items-center gap-1 px-2 py-1.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-600 text-xs font-medium"
+              className="app-button flex items-center gap-1 px-2 py-1.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-600 text-xs font-medium"
             >
               <Download size={14} />
               {t.export}
@@ -3400,7 +3501,7 @@ export default function App() {
             <button
               onClick={(e) => { e.stopPropagation(); handleExportImage(); }}
               title={t.exportImage}
-              className="flex items-center gap-1 px-2 py-1.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-600 text-xs font-medium"
+              className="app-button flex items-center gap-1 px-2 py-1.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-600 text-xs font-medium"
             >
               <Download size={14} />
               {t.exportImage}
@@ -3408,7 +3509,7 @@ export default function App() {
             <button
               onClick={(e) => { e.stopPropagation(); handleNewCanvas(); }}
               title={t.newCanvas}
-              className="flex items-center gap-1 px-2 py-1.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-600 text-xs font-medium"
+              className="app-button flex items-center gap-1 px-2 py-1.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-600 text-xs font-medium"
             >
               <FilePlus2 size={14} />
               {t.newCanvas}
@@ -3416,7 +3517,7 @@ export default function App() {
             <button
               onClick={(e) => { e.stopPropagation(); handleSaveToLoadedFile(); }}
               title={t.save}
-              className="flex items-center gap-1 px-2 py-1.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-600 text-xs font-medium"
+              className="app-button flex items-center gap-1 px-2 py-1.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-600 text-xs font-medium"
             >
               <Save size={14} />
               {t.save}
@@ -3424,7 +3525,7 @@ export default function App() {
             <button
               onClick={(e) => { e.stopPropagation(); setIsShortcutsModalOpen(true); }}
               title={t.settings}
-              className="flex items-center gap-1 px-2 py-1.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-600 text-xs font-medium"
+              className="app-button flex items-center gap-1 px-2 py-1.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-600 text-xs font-medium"
             >
               <Settings size={14} />
               {t.settings}
@@ -3440,12 +3541,12 @@ export default function App() {
 
         </div>
 
-        <div className="w-[300px] bg-white/80 backdrop-blur-sm border border-slate-200 rounded-xl shadow-sm p-2 pointer-events-auto">
+        <div className="app-panel w-[300px] bg-white/80 backdrop-blur-sm border border-slate-200 rounded-xl shadow-sm p-2 pointer-events-auto">
 
 
           <button
             onClick={(e) => { e.stopPropagation(); setIsShortcutsExpanded(prev => !prev); }}
-            className="w-full flex items-center justify-between text-[11px] font-semibold text-slate-600 px-1 py-1 rounded hover:bg-slate-100 transition-colors"
+            className="app-button w-full flex items-center justify-between text-[11px] font-semibold text-slate-600 px-1 py-1 rounded hover:bg-slate-100 transition-colors"
           >
             <span>{t.shortcuts}</span>
             <span className="flex items-center gap-1">
@@ -3476,7 +3577,7 @@ export default function App() {
 
       {/* Style Indicator */}
       {focused?.type === 'connection' && (
-        <div className="absolute bottom-6 right-6 bg-white px-4 py-2 rounded-full shadow-lg border border-slate-200 flex items-center gap-3 text-sm text-slate-600">
+        <div className="app-panel absolute bottom-6 right-6 bg-white px-4 py-2 rounded-full shadow-lg border border-slate-200 flex items-center gap-3 text-sm text-slate-600">
           <span className="font-medium">{t.style}</span>
           {getConnection(focused.id)?.style === 'forward' && <ArrowRight size={18} className="text-blue-500" />}
           {getConnection(focused.id)?.style === 'backward' && <ArrowLeft size={18} className="text-blue-500" />}
@@ -3492,6 +3593,8 @@ export default function App() {
         onClose={() => setIsShortcutsModalOpen(false)}
         shortcuts={shortcuts}
         onSave={setShortcuts}
+        theme={theme}
+        onThemeSave={setTheme}
         t={t}
         ctrlKey={ctrlKey}
       />
@@ -3505,12 +3608,15 @@ interface ShortcutsModalProps {
   onClose: () => void;
   shortcuts: KeyboardShortcuts;
   onSave: (shortcuts: KeyboardShortcuts) => void;
+  theme: 'light' | 'dark';
+  onThemeSave: (theme: 'light' | 'dark') => void;
   t: typeof TRANSLATIONS.en;
   ctrlKey: string;
 }
 
-function ShortcutsModal({ isOpen, onClose, shortcuts, onSave, t, ctrlKey }: ShortcutsModalProps) {
+function ShortcutsModal({ isOpen, onClose, shortcuts, onSave, theme, onThemeSave, t, ctrlKey }: ShortcutsModalProps) {
   const [localShortcuts, setLocalShortcuts] = useState<KeyboardShortcuts>(shortcuts);
+  const [localTheme, setLocalTheme] = useState<'light' | 'dark'>(theme);
   const [recordingAction, setRecordingAction] = useState<string | null>(null);
   const [conflicts, setConflicts] = useState<Set<string>>(new Set());
   const modalRef = useRef<HTMLDivElement>(null);
@@ -3518,10 +3624,11 @@ function ShortcutsModal({ isOpen, onClose, shortcuts, onSave, t, ctrlKey }: Shor
   useEffect(() => {
     if (isOpen) {
       setLocalShortcuts(shortcuts);
+      setLocalTheme(theme);
       setConflicts(new Set());
       setRecordingAction(null);
     }
-  }, [isOpen, shortcuts]);
+  }, [isOpen, shortcuts, theme]);
 
   useEffect(() => {
     if (!isOpen || !recordingAction) return;
@@ -3613,6 +3720,7 @@ function ShortcutsModal({ isOpen, onClose, shortcuts, onSave, t, ctrlKey }: Shor
       alert(t.shortcutConflict);
       return;
     }
+    onThemeSave(localTheme);
     onSave(localShortcuts);
     onClose();
   };
@@ -3643,79 +3751,108 @@ function ShortcutsModal({ isOpen, onClose, shortcuts, onSave, t, ctrlKey }: Shor
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
+      <div className="app-modal-backdrop absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
 
       {/* Modal */}
       <div
         ref={modalRef}
-        className="relative bg-white rounded-2xl shadow-2xl w-[480px] max-h-[80vh] flex flex-col"
+        className="app-modal relative bg-white rounded-2xl shadow-2xl w-[480px] max-h-[80vh] flex flex-col"
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
-          <h2 className="text-lg font-semibold text-slate-800">{t.shortcutsSettings}</h2>
+        <div className="app-modal-header flex items-center justify-between px-6 py-4 border-b border-slate-200">
+          <h2 className="app-modal-title text-lg font-semibold text-slate-800">{t.settings}</h2>
           <button
             onClick={onClose}
-            className="p-1 hover:bg-slate-100 rounded-lg transition-colors text-slate-400 hover:text-slate-600"
+            className="app-button p-1 hover:bg-slate-100 rounded-lg transition-colors text-slate-400 hover:text-slate-600"
           >
             <Minus size={20} />
           </button>
         </div>
 
-        {/* Instructions */}
-        <div className="px-6 py-3 bg-slate-50 border-b border-slate-200">
-          <p className="text-xs text-slate-500">{t.clickToRecord}</p>
-        </div>
-
-        {/* Shortcuts List */}
         <div className="flex-1 overflow-y-auto p-4">
-          <div className="space-y-2">
-            {actionNames.map(({ key, label }) => {
-              const config = localShortcuts[key];
-              const isRecording = recordingAction === key;
-              const hasConflict = conflicts.has(key);
-
-              return (
-                <div
-                  key={key}
-                  className={`flex items-center justify-between p-3 rounded-xl border transition-all ${
-                    hasConflict
-                      ? 'bg-red-50 border-red-200'
-                      : isRecording
-                        ? 'bg-blue-50 border-blue-300 ring-2 ring-blue-200'
-                        : 'bg-slate-50 border-slate-200 hover:border-slate-300'
+          <div className="space-y-4">
+            <div className="app-settings-section rounded-xl border border-slate-200 p-4">
+              <div className="app-settings-heading text-sm font-semibold">{t.appearanceSettings}</div>
+              <div className="mt-3 flex items-center gap-2">
+                <button
+                  onClick={() => setLocalTheme('light')}
+                  className={`app-segment-button px-3 py-2 rounded-lg transition-colors text-sm font-medium flex items-center gap-2 ${
+                    localTheme === 'light'
+                      ? 'app-segment-active bg-slate-900 text-white'
+                      : 'text-slate-600 hover:bg-slate-100'
                   }`}
                 >
-                  <span className="text-sm font-medium text-slate-700">{label}</span>
-                  <button
-                    onClick={() => setRecordingAction(isRecording ? null : key)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all min-w-[120px] ${
-                      isRecording
-                        ? 'bg-blue-500 text-white animate-pulse'
-                        : hasConflict
-                          ? 'bg-red-100 text-red-600 border border-red-200'
-                          : 'bg-white border border-slate-300 text-slate-600 hover:border-slate-400'
-                    }`}
-                  >
-                    {isRecording ? t.recording : formatShortcut(config)}
-                  </button>
-                </div>
-              );
-            })}
+                  <Sun size={16} />
+                  {t.lightMode}
+                </button>
+                <button
+                  onClick={() => setLocalTheme('dark')}
+                  className={`app-segment-button px-3 py-2 rounded-lg transition-colors text-sm font-medium flex items-center gap-2 ${
+                    localTheme === 'dark'
+                      ? 'app-segment-active bg-slate-900 text-white'
+                      : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  <Moon size={16} />
+                  {t.darkMode}
+                </button>
+              </div>
+            </div>
+            <div className="app-settings-section rounded-xl border border-slate-200 p-4">
+              <div className="flex items-center justify-between gap-4 mb-3">
+                <div className="app-settings-heading text-sm font-semibold">{t.shortcutsSection}</div>
+                <p className="app-icon-muted text-xs">{t.clickToRecord}</p>
+              </div>
+              <div className="space-y-2">
+                {actionNames.map(({ key, label }) => {
+                  const config = localShortcuts[key];
+                  const isRecording = recordingAction === key;
+                  const hasConflict = conflicts.has(key);
+
+                  return (
+                    <div
+                      key={key}
+                      className={`app-shortcut-row flex items-center justify-between p-3 rounded-xl border transition-all ${
+                        hasConflict
+                          ? 'bg-red-50 border-red-200'
+                          : isRecording
+                            ? 'bg-blue-50 border-blue-300 ring-2 ring-blue-200'
+                            : 'bg-slate-50 border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      <span className="app-row-label text-sm font-medium text-slate-700">{label}</span>
+                      <button
+                        onClick={() => setRecordingAction(isRecording ? null : key)}
+                        className={`app-shortcut-chip px-3 py-1.5 rounded-lg text-xs font-semibold transition-all min-w-[120px] ${
+                          isRecording
+                            ? 'bg-blue-500 text-white animate-pulse'
+                            : hasConflict
+                              ? 'bg-red-100 text-red-600 border border-red-200'
+                              : 'bg-white border border-slate-300 text-slate-600 hover:border-slate-400'
+                        }`}
+                      >
+                        {isRecording ? t.recording : formatShortcut(config)}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between px-6 py-4 border-t border-slate-200">
+        <div className="app-modal-footer flex items-center justify-between px-6 py-4 border-t border-slate-200">
           <button
             onClick={handleReset}
-            className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors"
+            className="app-button px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors"
           >
             {t.resetToDefaults}
           </button>
           <div className="flex items-center gap-2">
             <button
               onClick={onClose}
-              className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors"
+              className="app-button px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors"
             >
               {t.cancel}
             </button>
@@ -3735,8 +3872,8 @@ function ShortcutsModal({ isOpen, onClose, shortcuts, onSave, t, ctrlKey }: Shor
 
 function ShortcutGroup({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="bg-white/80 backdrop-blur-sm border border-slate-200 rounded-xl shadow-sm p-2">
-      <div className="text-[10px] font-semibold text-slate-500 mb-1.5">{title}</div>
+    <div className="app-shortcut-group bg-white/80 backdrop-blur-sm border border-slate-200 rounded-xl shadow-sm p-2">
+      <div className="app-label text-[10px] font-semibold text-slate-500 mb-1.5">{title}</div>
       <div className="flex flex-col gap-1.5">{children}</div>
     </div>
   );
@@ -3744,9 +3881,9 @@ function ShortcutGroup({ title, children }: { title: string; children: React.Rea
 
 function Kbd({ label, desc }: { label: string; desc: string }) {
   return (
-    <div className="w-full flex items-center justify-between gap-2 bg-white/80 backdrop-blur-sm border border-slate-200 px-2 py-1 rounded-lg shadow-sm">
-      <kbd className="px-1.5 py-0.5 bg-slate-100 border border-slate-300 rounded text-[10px] font-bold text-slate-600 uppercase tracking-wider shrink-0">{label}</kbd>
-      <span className="text-[10px] text-slate-500 font-medium text-right">{desc}</span>
+    <div className="app-kbd-row w-full flex items-center justify-between gap-2 bg-white/80 backdrop-blur-sm border border-slate-200 px-2 py-1 rounded-lg shadow-sm">
+      <kbd className="app-kbd px-1.5 py-0.5 bg-slate-100 border border-slate-300 rounded text-[10px] font-bold text-slate-600 uppercase tracking-wider shrink-0">{label}</kbd>
+      <span className="app-kbd-desc text-[10px] text-slate-500 font-medium text-right">{desc}</span>
     </div>
   );
 }
