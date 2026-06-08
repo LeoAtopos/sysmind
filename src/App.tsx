@@ -2986,28 +2986,6 @@ export default function App() {
                   markerStart={['backward', 'both'].includes(conn.style) ? `url(#${isFocused ? 'arrowhead-start-focused' : 'arrowhead-start'})` : undefined}
                   className="transition-colors duration-200"
                 />
-                {showCurveControlHandle && (
-                  <>
-                    <circle
-                      cx={curveControlX}
-                      cy={curveControlY}
-                      r={16}
-                      fill="transparent"
-                      onMouseDown={(e) => handleConnectionCurveControlMouseDown(e, conn.id)}
-                      className="cursor-grab"
-                    />
-                    <circle
-                      cx={curveControlX}
-                      cy={curveControlY}
-                      r={7}
-                      fill={isFocused ? themeColors.connectionFocused : themeColors.connectionSelected}
-                      stroke={themeColors.handleStroke}
-                      strokeWidth={1.5}
-                      onMouseDown={(e) => handleConnectionCurveControlMouseDown(e, conn.id)}
-                      className="cursor-grab"
-                    />
-                  </>
-                )}
                 {showStartHandle && (
 
                   <>
@@ -3121,6 +3099,38 @@ export default function App() {
                     </div>
                   </foreignObject>
 
+                )}
+                {showCurveControlHandle && (
+                  <>
+                    <line
+                      x1={(rawStartX + rawEndX) / 2}
+                      y1={(rawStartY + rawEndY) / 2}
+                      x2={curveControlX}
+                      y2={curveControlY}
+                      stroke={themeColors.handleStroke}
+                      strokeWidth={1}
+                      strokeDasharray="3 3"
+                      pointerEvents="none"
+                    />
+                    <circle
+                      cx={curveControlX}
+                      cy={curveControlY}
+                      r={16}
+                      fill="transparent"
+                      onMouseDown={(e) => handleConnectionCurveControlMouseDown(e, conn.id)}
+                      className="cursor-grab"
+                    />
+                    <circle
+                      cx={curveControlX}
+                      cy={curveControlY}
+                      r={7}
+                      fill={isFocused ? themeColors.connectionFocused : themeColors.connectionSelected}
+                      stroke={themeColors.handleStroke}
+                      strokeWidth={1.5}
+                      onMouseDown={(e) => handleConnectionCurveControlMouseDown(e, conn.id)}
+                      className="cursor-grab"
+                    />
+                  </>
                 )}
               </g>
             );
