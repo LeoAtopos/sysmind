@@ -274,6 +274,7 @@ const TRANSLATIONS = {
     actionDelete: '删除',
     actionUndo: '撤销',
     actionRedo: '还原',
+    actionSave: '保存',
     actionZoomIn: '放大',
     actionZoomOut: '缩小',
     actionZoomReset: '重置缩放',
@@ -368,6 +369,7 @@ const TRANSLATIONS = {
     actionDelete: 'Delete',
     actionUndo: 'Undo',
     actionRedo: 'Redo',
+    actionSave: 'Save',
     actionZoomIn: 'Zoom In',
     actionZoomOut: 'Zoom Out',
     actionZoomReset: 'Reset Zoom',
@@ -535,6 +537,7 @@ export default function App() {
       { label: 'Arrows', desc: t.arrows },
       { label: formatShortcutLabel(shortcuts.undo, ctrlKey), desc: t.undo },
       { label: formatShortcutLabel(shortcuts.redo, ctrlKey), desc: t.redo },
+      { label: formatShortcutLabel(shortcuts.save, ctrlKey), desc: t.save },
     ],
   }), [ctrlKey, shortcuts, t]);
   const currentShortcutHints = useMemo(() => {
@@ -1207,6 +1210,11 @@ export default function App() {
     const handleKeyDown = (e: KeyboardEvent) => {
       // If editing text, handle finish/cancel
       if (isEditing) {
+        if (matchesShortcut(e, shortcuts.save)) {
+          e.preventDefault();
+          handleSaveToLoadedFile();
+          return;
+        }
         if (e.key === 'Enter' || e.key === 'Escape') {
           e.preventDefault();
           if (focused?.type === 'connection') {
@@ -1235,6 +1243,13 @@ export default function App() {
       if (matchesShortcut(e, shortcuts.redo)) {
         e.preventDefault();
         redo();
+        return;
+      }
+
+      // Save file (override browser's Cmd+S / Ctrl+S)
+      if (matchesShortcut(e, shortcuts.save)) {
+        e.preventDefault();
+        handleSaveToLoadedFile();
         return;
       }
 
@@ -1310,6 +1325,11 @@ export default function App() {
             pushHistory(nodes, nextConns, focused);
             setSearchQuery(null);
           }
+          return;
+        }
+        if (matchesShortcut(e, shortcuts.save)) {
+          e.preventDefault();
+          handleSaveToLoadedFile();
           return;
         }
         return;
@@ -1497,6 +1517,8 @@ export default function App() {
             };
             const newConn = createConnection(previousNode.id, null, targetPos);
             const nextFocused = { type: 'connection', id: newConn.id };
+            setSelectedNodeIds([]);
+            setSelectedConnectionIds([]);
             setFocused(nextFocused);
             pushHistory(nodes, [...connections, newConn], nextFocused);
           }
@@ -1506,6 +1528,8 @@ export default function App() {
           const newNodeY = node.y + NODE_HEIGHT + 60; // Place below with some distance
           const newNode = createNode(node.x, newNodeY);
           const nextFocused = { type: 'node', id: newNode.id };
+          setSelectedNodeIds([]);
+          setSelectedConnectionIds([]);
           setFocused(nextFocused);
           setShouldSelect(true);
           setIsEditing(true);
@@ -1514,6 +1538,8 @@ export default function App() {
           e.preventDefault();
           const newConn = createConnection(node.id, null, { x: node.x + lastDirection.x, y: node.y + lastDirection.y });
           const nextFocused = { type: 'connection', id: newConn.id };
+          setSelectedNodeIds([]);
+          setSelectedConnectionIds([]);
           setFocused(nextFocused);
           pushHistory(nodes, [...connections, newConn], nextFocused);
         } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
@@ -1651,7 +1677,7 @@ export default function App() {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [focused, isEditing, nodes, connections, canvasOffset, searchQuery, searchResults, selectedIndex, lastStyle, defaultOffset, selectedNodeIds, selectedConnectionIds, shortcuts, matchesShortcut]);
+  }, [focused, isEditing, nodes, connections, canvasOffset, searchQuery, searchResults, selectedIndex, lastStyle, defaultOffset, selectedNodeIds, selectedConnectionIds, shortcuts, matchesShortcut, handleSaveToLoadedFile]);
 
   // Spatial Navigation
   const moveFocus = (key: string) => {
@@ -3744,6 +3770,7 @@ function ShortcutsModal({ isOpen, onClose, shortcuts, onSave, theme, onThemeSave
     { key: 'delete', label: t.actionDelete },
     { key: 'undo', label: t.actionUndo },
     { key: 'redo', label: t.actionRedo },
+    { key: 'save', label: t.actionSave },
     { key: 'zoomIn', label: t.actionZoomIn },
     { key: 'zoomOut', label: t.actionZoomOut },
     { key: 'zoomReset', label: t.actionZoomReset },
