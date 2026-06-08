@@ -3,7 +3,12 @@
     "allow": [
       "Bash(npm run:*)",
       "Bash(sleep 3 && curl -s http://localhost:3000 -o /dev/null -w \"%{http_code}\")",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(sleep 2 && lsof -i :3000 | head -5)",
+      "Bash(cd /Library/Projects/vscode/sysmind && npx tsc --noEmit 2>&1 | head -20)",
+      "Bash(cd /Library/Projects/vscode/sysmind && npx tsc --noEmit 2>&1 | tail -5)",
+      "Bash(ps aux | grep -E \"vite|node.*dev\" | grep -v grep | head -3)",
+      "Bash(curl -s http://localhost:3000 | grep -q \"sysmind\" && echo \"OK\" || echo \"FAIL\")"
     ]
   }
 }

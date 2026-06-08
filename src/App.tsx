@@ -34,15 +34,107 @@ const MAX_SCALE = 2.5;
 const LANGUAGE_STORAGE_KEY = 'sysmind-language';
 const THEME_STORAGE_KEY = 'sysmind-theme';
 
+type PerfDebugState = {
+  lastFlushTs: number;
+  renderCount: number;
+  renderTotalMs: number;
+  measureTextCount: number;
+  measureTextTotalMs: number;
+  adaptiveCount: number;
+  adaptiveTotalMs: number;
+  overlapCount: number;
+  overlapTotalMs: number;
+  hoverCount: number;
+  hoverTotalMs: number;
+  historyCount: number;
+  historyTotalMs: number;
+};
+
+const getPerfDebugState = (): PerfDebugState | null => {
+  if (typeof window === 'undefined') return null;
+  const debugWindow = window as typeof window & { __sysmindPerfDebug?: PerfDebugState };
+  if (!debugWindow.__sysmindPerfDebug) {
+    debugWindow.__sysmindPerfDebug = {
+      lastFlushTs: 0,
+      renderCount: 0,
+      renderTotalMs: 0,
+      measureTextCount: 0,
+      measureTextTotalMs: 0,
+      adaptiveCount: 0,
+      adaptiveTotalMs: 0,
+      overlapCount: 0,
+      overlapTotalMs: 0,
+      hoverCount: 0,
+      hoverTotalMs: 0,
+      historyCount: 0,
+      historyTotalMs: 0,
+    };
+  }
+  return debugWindow.__sysmindPerfDebug;
+};
+
+const resetPerfDebugCounters = (state: PerfDebugState) => {
+  state.renderCount = 0;
+  state.renderTotalMs = 0;
+  state.measureTextCount = 0;
+  state.measureTextTotalMs = 0;
+  state.adaptiveCount = 0;
+  state.adaptiveTotalMs = 0;
+  state.overlapCount = 0;
+  state.overlapTotalMs = 0;
+  state.hoverCount = 0;
+  state.hoverTotalMs = 0;
+  state.historyCount = 0;
+  state.historyTotalMs = 0;
+};
+
+// #region debug-point A:perf-report
+const reportPerfDebug = (hypothesisId: 'A' | 'B' | 'C' | 'D' | 'E', location: string, msg: string, data: Record<string, unknown>) => {
+  fetch('http://127.0.0.1:7777/event', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      sessionId: 'large-graph-lag',
+      runId: PERF_DEBUG_RUN_ID,
+      hypothesisId,
+      location,
+      msg: `[DEBUG] ${msg}`,
+      data,
+      ts: Date.now(),
+    }),
+  }).catch(() => {});
+};
+// #endregion
+
+const textMeasureCanvas = typeof document !== 'undefined' ? document.createElement('canvas') : null;
+const textMeasureContext = textMeasureCanvas?.getContext('2d') ?? null;
+const textMeasureCache = new Map<string, number>();
+const adaptiveTextBoxCache = new Map<string, { width: number; height: number; lines: string[] }>();
+const PERF_DEBUG_RUN_ID = 'post-fix';
 
 const measureText = (text: string, font: string) => {
-  const canvas = document.createElement('canvas');
-  const context = canvas.getContext('2d');
-  if (context) {
-    context.font = font;
-    return context.measureText(text).width;
+  const perfStart = performance.now();
+  const cacheKey = `${font}__${text}`;
+  const cachedWidth = textMeasureCache.get(cacheKey);
+  if (cachedWidth !== undefined) {
+    const perfState = getPerfDebugState();
+    if (perfState) {
+      perfState.measureTextCount += 1;
+      perfState.measureTextTotalMs += performance.now() - perfStart;
+    }
+    return cachedWidth;
   }
-  return text.length * 8;
+
+  const width = textMeasureContext
+    ? (textMeasureContext.font = font, textMeasureContext.measureText(text).width)
+    : text.length * 8;
+  textMeasureCache.set(cacheKey, width);
+  const perfState = getPerfDebugState();
+  if (perfState) {
+    perfState.measureTextCount += 1;
+    perfState.measureTextTotalMs += performance.now() - perfStart;
+  }
+  return width;
 };
 
 const triggerDownload = (blob: Blob, filename: string) => {
@@ -116,17 +208,45 @@ const getAdaptiveTextBoxSize = (
     minHeight?: number;
   },
 ) => {
+  const perfStart = performance.now();
   const content = text || config.fallbackText || '';
+  const cacheKey = [
+    content,
+    config.minWidth,
+    config.maxWidth,
+    config.hPadding,
+    config.vPadding,
+    config.lineHeight,
+    config.font,
+    config.minHeight ?? 0,
+  ].join('__');
+  const cachedResult = adaptiveTextBoxCache.get(cacheKey);
+  if (cachedResult) {
+    const perfState = getPerfDebugState();
+    if (perfState) {
+      perfState.adaptiveCount += 1;
+      perfState.adaptiveTotalMs += performance.now() - perfStart;
+    }
+    return cachedResult;
+  }
   const maxTextWidth = Math.max(1, config.maxWidth - config.hPadding);
   const lines = wrapTextLines(content, maxTextWidth, config.font);
   const widest = Math.max(...lines.map(line => measureText(line, config.font)), 0);
   const width = Math.max(config.minWidth, Math.min(config.maxWidth, Math.ceil(widest + config.hPadding)));
   const rawHeight = Math.ceil(lines.length * config.lineHeight + config.vPadding);
   const height = Math.max(config.minHeight ?? 0, rawHeight);
-  return { width, height, lines };
+  const result = { width, height, lines };
+  adaptiveTextBoxCache.set(cacheKey, result);
+  const perfState = getPerfDebugState();
+  if (perfState) {
+    perfState.adaptiveCount += 1;
+    perfState.adaptiveTotalMs += performance.now() - perfStart;
+  }
+  return result;
 };
 
 const resolveNodeOverlaps = (inputNodes: Node[], lockedNodeId?: string) => {
+  const perfStart = performance.now();
 
 
   if (inputNodes.length < 2) return inputNodes;
@@ -186,6 +306,11 @@ const resolveNodeOverlaps = (inputNodes: Node[], lockedNodeId?: string) => {
   }
 
   const changed = nodes.some((n, idx) => n.x !== inputNodes[idx].x || n.y !== inputNodes[idx].y);
+  const perfState = getPerfDebugState();
+  if (perfState) {
+    perfState.overlapCount += 1;
+    perfState.overlapTotalMs += performance.now() - perfStart;
+  }
   return changed ? nodes : inputNodes;
 };
 
@@ -440,6 +565,7 @@ export default function App() {
   const [selectionBox, setSelectionBox] = useState<{ start: { x: number; y: number }; current: { x: number; y: number } } | null>(null);
   const [shortcuts, setShortcuts] = useState<KeyboardShortcuts>(DEFAULT_SHORTCUTS);
   const [isShortcutsModalOpen, setIsShortcutsModalOpen] = useState(false);
+  const previousGraphSizeRef = useRef({ nodes: 0, connections: 0 });
 
 
 
@@ -456,8 +582,10 @@ export default function App() {
     stack: [{ nodes: [], connections: [], focused: null }],
     index: 0
   });
+  const renderPerfStart = performance.now();
 
   const pushHistory = useCallback((currentNodes: Node[], currentConnections: Connection[], currentFocused: FocusedElement) => {
+    const perfStart = performance.now();
     setHistory(prev => {
       const newStack = prev.stack.slice(0, prev.index + 1);
       const last = newStack[newStack.length - 1];
@@ -471,6 +599,11 @@ export default function App() {
         index: newStack.length
       };
     });
+    const perfState = getPerfDebugState();
+    if (perfState) {
+      perfState.historyCount += 1;
+      perfState.historyTotalMs += performance.now() - perfStart;
+    }
   }, []);
 
   const updateFocus = useCallback((nextFocused: FocusedElement) => {
@@ -693,6 +826,10 @@ export default function App() {
     }
     const loadedNodes: Node[] = Array.isArray(data.nodes) ? data.nodes : [];
     const loadedConns: Connection[] = Array.isArray(data.connections) ? data.connections : [];
+    reportPerfDebug('C', 'App.tsx:applyImportedData', 'import applied', {
+      nodes: loadedNodes.length,
+      connections: loadedConns.length,
+    });
     setNodes(loadedNodes);
     setConnections(loadedConns);
     setFocused(null);
@@ -729,6 +866,29 @@ export default function App() {
     if (fallback && !fallback.includes('fakepath')) return fallback;
     return null;
   }, []);
+
+  // #region debug-point C:graph-reset-trace
+  useEffect(() => {
+    const previous = previousGraphSizeRef.current;
+    if (
+      previous.nodes > 0 &&
+      nodes.length === 0
+    ) {
+      reportPerfDebug('C', 'App.tsx:graph-reset-trace', 'graph cleared after non-empty state', {
+        previousNodes: previous.nodes,
+        previousConnections: previous.connections,
+        nextNodes: nodes.length,
+        nextConnections: connections.length,
+        historyIndex: history.index,
+        historySize: history.stack.length,
+        focusedType: focused?.type ?? 'none',
+        isEditing,
+        isPanning,
+      });
+    }
+    previousGraphSizeRef.current = { nodes: nodes.length, connections: connections.length };
+  }, [connections.length, focused?.type, history.index, history.stack.length, isEditing, isPanning, nodes.length]);
+  // #endregion
 
   const handleSaveToLoadedFile = useCallback(async (): Promise<boolean> => {
     try {
@@ -872,11 +1032,15 @@ export default function App() {
 
 
   // Helper to get element by ID
-  const getNode = (id: string) => nodes.find(n => n.id === id);
-  const getConnection = (id: string) => connections.find(c => c.id === id);
+  const nodeMap = useMemo(() => new Map(nodes.map(node => [node.id, node] as const)), [nodes]);
+  const connectionMap = useMemo(() => new Map(connections.map(connection => [connection.id, connection] as const)), [connections]);
+  const selectedNodeIdSet = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds]);
+  const selectedConnectionIdSet = useMemo(() => new Set(selectedConnectionIds), [selectedConnectionIds]);
+  const getNode = (id: string) => nodeMap.get(id);
+  const getConnection = (id: string) => connectionMap.get(id);
   const getConnectionPairKey = (aId: string, bId: string) => aId < bId ? `${aId}::${bId}` : `${bId}::${aId}`;
 
-  const getNodeBoxSize = (nodeText: string) => {
+  const getNodeBoxSize = useCallback((nodeText: string) => {
     return getAdaptiveTextBoxSize(nodeText, {
       minWidth: NODE_MIN_WIDTH,
       maxWidth: NODE_MAX_WIDTH,
@@ -887,9 +1051,9 @@ export default function App() {
       fallbackText: t.newNode,
       minHeight: NODE_MIN_HEIGHT,
     });
-  };
+  }, [t.newNode]);
 
-  const getConnectionLabelSize = (text: string) => {
+  const getConnectionLabelSize = useCallback((text: string) => {
     return getAdaptiveTextBoxSize(text, {
       minWidth: CONNECTION_LABEL_MIN_WIDTH,
       maxWidth: CONNECTION_LABEL_MAX_WIDTH,
@@ -899,7 +1063,7 @@ export default function App() {
       font: '500 10px Inter, ui-sans-serif, system-ui, sans-serif',
       minHeight: 22,
     });
-  };
+  }, []);
 
   const resolveDeleteFallbackFocus = (
     nextNodes: Node[],
@@ -1877,6 +2041,12 @@ export default function App() {
     if (e.button === 2) return;
     if (e.button !== 0) return;
     e.stopPropagation();
+
+    if (focused?.type === 'node' && focused.id === nodeId && isEditing) {
+      setIsEditing(false);
+      return;
+    }
+
     setDraggingCurveControl(null);
 
     const isSelected = selectedNodeIds.includes(nodeId);
@@ -1904,6 +2074,7 @@ export default function App() {
     e.stopPropagation();
 
     if (focused?.type === 'connection' && focused.id === connId && isEditing) {
+      setIsEditing(false);
       return;
     }
 
@@ -1917,10 +2088,8 @@ export default function App() {
       setSelectedConnectionIds([connId]);
       setDraggingNodeIds(getSelectedNodeIdsByCurrentSelection([], [connId]));
       setDraggingPendingConnectionIds(getPendingConnectionIdsBySelection([connId]));
-      if (!(focused?.type === 'connection' && focused.id === connId && isEditing)) {
-        clearBeforePreviousOnNextFocusRef.current = true;
-        updateFocus({ type: 'connection', id: connId });
-      }
+      clearBeforePreviousOnNextFocusRef.current = true;
+      updateFocus({ type: 'connection', id: connId });
       return;
     }
 
@@ -2788,6 +2957,7 @@ export default function App() {
   };
 
   const getHoveredEndpointAtClientPoint = (clientX: number, clientY: number) => {
+    const perfStart = performance.now();
     const world = getWorldPointFromClient(clientX, clientY);
     const threshold = 18 / (canvasScale === 0 ? 1 : canvasScale);
 
@@ -2808,9 +2978,66 @@ export default function App() {
       }
     }
 
+    const perfState = getPerfDebugState();
+    if (perfState) {
+      perfState.hoverCount += 1;
+      perfState.hoverTotalMs += performance.now() - perfStart;
+    }
     if (!best) return null;
     return { connId: best.connId, endpoint: best.endpoint };
   };
+
+  // #region debug-point B:perf-flush
+  useEffect(() => {
+    const perfState = getPerfDebugState();
+    if (!perfState) return;
+
+    perfState.renderCount += 1;
+    perfState.renderTotalMs += performance.now() - renderPerfStart;
+
+    const itemCount = nodes.length + connections.length;
+    const now = performance.now();
+    if (itemCount < 80 || now - perfState.lastFlushTs < 1500) return;
+
+    perfState.lastFlushTs = now;
+    reportPerfDebug('B', 'App.tsx:perf-flush', 'graph perf snapshot', {
+      nodes: nodes.length,
+      connections: connections.length,
+      itemCount,
+      focusedType: focused?.type ?? 'none',
+      isEditing,
+      isPanning,
+      draggingNodeCount: draggingNodeIds?.length ?? 0,
+      draggingEndpoint: Boolean(draggingEndpoint),
+      draggingCurveControl: Boolean(draggingCurveControl),
+      selectionActive: Boolean(selectionBox),
+      renderCount: perfState.renderCount,
+      renderAvgMs: Number((perfState.renderTotalMs / Math.max(perfState.renderCount, 1)).toFixed(3)),
+      measureTextCount: perfState.measureTextCount,
+      measureTextAvgMs: Number((perfState.measureTextTotalMs / Math.max(perfState.measureTextCount, 1)).toFixed(4)),
+      adaptiveCount: perfState.adaptiveCount,
+      adaptiveAvgMs: Number((perfState.adaptiveTotalMs / Math.max(perfState.adaptiveCount, 1)).toFixed(4)),
+      overlapCount: perfState.overlapCount,
+      overlapAvgMs: Number((perfState.overlapTotalMs / Math.max(perfState.overlapCount, 1)).toFixed(4)),
+      hoverCount: perfState.hoverCount,
+      hoverAvgMs: Number((perfState.hoverTotalMs / Math.max(perfState.hoverCount, 1)).toFixed(4)),
+      historyCount: perfState.historyCount,
+      historyAvgMs: Number((perfState.historyTotalMs / Math.max(perfState.historyCount, 1)).toFixed(4)),
+    });
+    resetPerfDebugCounters(perfState);
+  }, [
+    connections.length,
+    draggingCurveControl,
+    draggingEndpoint,
+    draggingNodeIds,
+    focused?.type,
+    isEditing,
+    isPanning,
+    nodes.length,
+    renderPerfStart,
+    selectionBox,
+  ]);
+  // #endregion
 
 
   useEffect(() => {
@@ -2960,7 +3187,7 @@ export default function App() {
 
 
             const isFocused = focused?.type === 'connection' && focused.id === conn.id;
-            const isSelected = selectedConnectionIds.includes(conn.id);
+            const isSelected = selectedConnectionIdSet.has(conn.id);
             const showStartHandle =
               draggingEndpoint?.connId === conn.id
               || (hoveredEndpoint?.connId === conn.id && hoveredEndpoint.endpoint === 'start');
@@ -2968,7 +3195,7 @@ export default function App() {
               draggingEndpoint?.connId === conn.id
               || (hoveredEndpoint?.connId === conn.id && hoveredEndpoint.endpoint === 'end');
             const isDraggingCurveControl = draggingCurveControl?.connId === conn.id;
-            const showCurveControlHandle = centerLen > 0 && (isSelected || isDraggingCurveControl) && !draggingEndpoint;
+            const showCurveControlHandle = centerLen > 0 && (isSelected || isDraggingCurveControl) && !draggingEndpoint && !isEditing;
             const curveControlX = (rawStartX + rawEndX) / 2 + normalX * curveOffset * 0.75;
             const curveControlY = (rawStartY + rawEndY) / 2 + normalY * curveOffset * 0.75;
             const color = isFocused ? themeColors.connectionFocused : (isSelected ? themeColors.connectionSelected : themeColors.connectionBase);
@@ -2976,10 +3203,10 @@ export default function App() {
 
 
 
-            const labelBox = getConnectionLabelSize(conn.text);
-            const labelWidth = labelBox.width;
-            const labelHeight = labelBox.height;
-            const labelLines = labelBox.lines;
+            const labelBox = (conn.text || isFocused) ? getConnectionLabelSize(conn.text) : null;
+            const labelWidth = labelBox?.width ?? CONNECTION_LABEL_MIN_WIDTH;
+            const labelHeight = labelBox?.height ?? 22;
+            const labelLines = labelBox?.lines ?? [''];
             const labelX = curveOffset === 0
               ? (startX + endX) / 2
               : 0.125 * startX + 0.375 * c1x + 0.375 * c2x + 0.125 * endX;
@@ -3058,7 +3285,7 @@ export default function App() {
                   </>
                 )}
                 {/* Connection Label */}
-                {conn.text && !(isFocused && isEditing) && (
+                {conn.text && labelBox && !(isFocused && isEditing) && (
                   <g
                     pointerEvents="all"
                     onMouseDown={(e) => handleConnectionMouseDown(e, conn.id)}
@@ -3106,6 +3333,9 @@ export default function App() {
                       <textarea
                         ref={inputRef}
                         rows={Math.max(1, labelLines.length)}
+                        onMouseDown={(e) => {
+                          if (isEditing) e.stopPropagation();
+                        }}
                         className={`app-connection-editor absolute inset-0 w-full h-full border-2 rounded px-1 py-1 text-[10px] font-medium text-center outline-none shadow-lg transition-opacity z-10 resize-none overflow-hidden leading-[14px]
                           ${isEditing ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
 
@@ -3166,7 +3396,7 @@ export default function App() {
         {/* Nodes */}
         {nodes.map(node => {
           const isFocused = focused?.type === 'node' && focused.id === node.id;
-          const isSelected = selectedNodeIds.includes(node.id);
+          const isSelected = selectedNodeIdSet.has(node.id);
           const nodeBox = getNodeBoxSize(node.text);
           const nodeStyle = node.style || 'default';
 
@@ -3304,6 +3534,9 @@ export default function App() {
                 <textarea
                   ref={inputRef}
                   rows={Math.max(1, nodeLines.length)}
+                  onMouseDown={(e) => {
+                    if (isEditing) e.stopPropagation();
+                  }}
                   className={`app-node-editor absolute inset-0 w-full h-full rounded-xl outline-none px-2 py-2 text-sm font-medium transition-opacity z-10 resize-none overflow-hidden leading-[18px] ${textAlignClass}
                     ${isEditing ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
 
