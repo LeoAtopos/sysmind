@@ -5,34 +5,45 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, ArrowRight, ArrowLeft, ArrowLeftRight, Minus, Trash2, MousePointer2, Download, Upload, Save, FilePlus2, ChevronDown, ChevronUp, Settings, Sun, Moon } from 'lucide-react';
+import { Search, ArrowRight, ArrowLeft, ArrowLeftRight, Minus, MousePointer2, Download, Upload, Save, FilePlus2, ChevronDown, ChevronUp, Settings } from 'lucide-react';
 
+import { ShortcutsModal } from './components/ShortcutsModal';
+import {
+  CONNECTION_LABEL_H_PADDING,
+  CONNECTION_LABEL_LINE_HEIGHT,
+  CONNECTION_LABEL_MAX_WIDTH,
+  CONNECTION_LABEL_MIN_HEIGHT,
+  CONNECTION_LABEL_MIN_WIDTH,
+  CONNECTION_LABEL_V_PADDING,
+  GRID_SIZE,
+  LANGUAGE_STORAGE_KEY,
+  MAX_SCALE,
+  MIN_SCALE,
+  NODE_HEIGHT,
+  NODE_MAX_WIDTH,
+  NODE_MIN_HEIGHT,
+  NODE_MIN_WIDTH,
+  NODE_REPEL_MAX_ITERATIONS,
+  NODE_REPEL_PADDING,
+  NODE_WIDTH,
+  NODE_TEXT_H_PADDING,
+  NODE_TEXT_LINE_HEIGHT,
+  NODE_TEXT_V_PADDING,
+  RETURN_CONN_TARGET_OFFSET_Y,
+  THEME_STORAGE_KEY,
+  ZOOM_STEP,
+} from './lib/constants';
+import { createGraphId, getBestEffortFilePath, triggerDownload } from './lib/fileUtils';
+import {
+  buildConnectionGeometry,
+  chooseBestCurveBend,
+  getConnectionCurveOffsetRaw,
+  getConnectionFocusPoint,
+} from './lib/graphGeometry';
+import { getNodeCanvasVisual, getNodeStyleClasses, getNodeTextClasses } from './lib/nodePresentation';
+import { formatShortcutLabel, matchesShortcut } from './lib/shortcuts';
+import { AppLanguage, TRANSLATIONS } from './lib/translations';
 import { Node, Connection, ConnectionStyle, NodeStyle, FocusedElement, KeyboardShortcuts, DEFAULT_SHORTCUTS } from './types';
-
-const GRID_SIZE = 20;
-const NODE_WIDTH = 120;
-const NODE_HEIGHT = 40;
-const NODE_MAX_WIDTH = NODE_WIDTH * 2;
-const NODE_MIN_WIDTH = NODE_WIDTH;
-const NODE_MIN_HEIGHT = NODE_HEIGHT;
-const NODE_TEXT_H_PADDING = 16;
-const NODE_TEXT_V_PADDING = 12;
-const NODE_TEXT_LINE_HEIGHT = 18;
-const CONNECTION_LABEL_MIN_WIDTH = 40;
-const CONNECTION_LABEL_MAX_WIDTH = CONNECTION_LABEL_MIN_WIDTH * 2;
-const CONNECTION_LABEL_H_PADDING = 20;
-const CONNECTION_LABEL_V_PADDING = 10;
-const CONNECTION_LABEL_LINE_HEIGHT = 14;
-const NODE_REPEL_PADDING = 12;
-const NODE_REPEL_MAX_ITERATIONS = 4;
-const CONNECTION_CURVE_BASE = 56;
-const CONNECTION_CURVE_STEP = 28;
-const RETURN_CONN_TARGET_OFFSET_Y = NODE_HEIGHT / 2 + 40;
-const ZOOM_STEP = 0.1;
-const MIN_SCALE = 0.4;
-const MAX_SCALE = 2.5;
-const LANGUAGE_STORAGE_KEY = 'sysmind-language';
-const THEME_STORAGE_KEY = 'sysmind-theme';
 
 type PerfDebugState = {
   lastFlushTs: number;
@@ -135,20 +146,6 @@ const measureText = (text: string, font: string) => {
     perfState.measureTextTotalMs += performance.now() - perfStart;
   }
   return width;
-};
-
-const triggerDownload = (blob: Blob, filename: string) => {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.style.display = 'none';
-  document.body.appendChild(a);
-  a.click();
-  window.setTimeout(() => {
-    URL.revokeObjectURL(url);
-    a.remove();
-  }, 1000);
 };
 
 const wrapTextLines = (text: string, maxTextWidth: number, font: string) => {
@@ -315,218 +312,8 @@ const resolveNodeOverlaps = (inputNodes: Node[], lockedNodeId?: string) => {
 };
 
 
-const TRANSLATIONS = {
-  zh: {
-    connLength: '连线长度',
-    commonActions: '通用操作',
-    emptyFocusActions: '空焦点操作',
-    nodeActions: '节点焦点操作',
-    connectionActions: '连线焦点操作',
-    nodeEditingActions: '节点文本输入',
-    connectionEditingActions: '连线文本输入',
-    enterGlobal: '新建节点',
-    enterNode: '从节点新建连线',
-    shiftEnterNode: '下方新建节点',
-    enterConnection: '完成连线/新建目标节点',
-    typeText: '输入文字',
-    finishEditing: '完成编辑',
-    space: '编辑文字',
-    tab: '切换样式',
-    tabNode: '切换节点样式',
-    ctrlArrowsNode: '移动节点',
-    ctrlArrowsConnection: '移动末端',
-    zoom: '缩放',
-    zoomReset: '重置缩放',
-    search: '搜索链接',
-    undo: '撤销',
-    redo: '还原',
-    arrows: '移动焦点',
-    deleteNode: '删除节点',
-    deleteConnection: '删除连线',
-    searchPlaceholder: '搜索节点进行链接...',
-    noNodesFound: '未找到节点',
-    untitledNode: '无标题节点',
-    newNode: '新节点',
-    style: '样式:',
-    tabToCycle: '按 Tab 键切换',
-    export: '导出',
-    exportImage: '导出图片',
-    import: '加载',
-    save: '保存',
-    newCanvas: '新建',
-    saveSuccess: '保存成功',
-    saveFailed: '保存失败',
-    saveUnavailable: '当前加载方式不支持直接覆盖保存，请使用“加载”按钮选择文件后再保存',
-    file: '文件',
-    path: '路径',
-    pathUnavailable: '浏览器安全限制，无法获取真实路径',
-    notWritableSource: '当前来源不可覆盖保存（请用“加载”按钮选择文件）',
-    exportSuccess: '导出成功',
-    importError: '文件格式错误',
-    stormSystemTitle: '风暴速度输出系统结构',
-    shortcuts: '快捷键',
-
-    showShortcuts: '展开',
-    hideShortcuts: '收起',
-
-    emptyHint: '回车键开始创作',
-    settings: '设置',
-    language: '语言',
-    languageZh: '中文',
-    languageEn: '英文',
-    theme: '主题',
-    lightMode: '浅色',
-    darkMode: '深色',
-    appearanceSettings: '外观设置',
-    shortcutsSection: '快捷键设置',
-    shortcutsSettings: '快捷键设置',
-    shortcutAction: '操作',
-    shortcutKey: '快捷键',
-    clickToRecord: '点击录制',
-    recording: '录制中...',
-    pressAnyKey: '按下任意键组合',
-    resetToDefaults: '恢复默认',
-    cancel: '取消',
-    shortcutConflict: '快捷键冲突',
-    shortcutConflictDesc: '此快捷键已被其他操作使用',
-
-    // Action names for shortcuts
-    actionCreateNode: '新建节点',
-    actionCreateConnection: '从节点新建连线',
-    actionCreateNodeBelow: '下方新建节点',
-    actionReturnConnection: '返回连线',
-    actionEditText: '编辑文字',
-    actionDelete: '删除',
-    actionUndo: '撤销',
-    actionRedo: '还原',
-    actionSave: '保存',
-    actionZoomIn: '放大',
-    actionZoomOut: '缩小',
-    actionZoomReset: '重置缩放',
-    actionMoveUp: '向上移动',
-    actionMoveDown: '向下移动',
-    actionMoveLeft: '向左移动',
-    actionMoveRight: '向右移动',
-    actionCycleStyle: '切换样式',
-    actionSearch: '搜索链接',
-    actionOpenShortcuts: '打开快捷键设置',
-
-  },
-  en: {
-    connLength: 'Conn Length',
-    commonActions: 'Common Actions',
-    emptyFocusActions: 'No-Focus Actions',
-    nodeActions: 'Node-Focused',
-    connectionActions: 'Connection-Focused',
-    nodeEditingActions: 'Node Text Input',
-    connectionEditingActions: 'Link Text Input',
-    enterGlobal: 'Create Node',
-    enterNode: 'Create Connection from Node',
-    shiftEnterNode: 'Create Node Below',
-    enterConnection: 'Complete Link / Create Target Node',
-    typeText: 'Type Text',
-    finishEditing: 'Finish Editing',
-    space: 'Edit Text',
-    tab: 'Cycle Style',
-    tabNode: 'Cycle Node Style',
-    ctrlArrowsNode: 'Move Node',
-    ctrlArrowsConnection: 'Move End',
-    zoom: 'Zoom',
-    zoomReset: 'Reset Zoom',
-    search: 'Search Link',
-    undo: 'Undo',
-    redo: 'Redo',
-    arrows: 'Move Focus',
-    deleteNode: 'Delete Node',
-    deleteConnection: 'Delete Connection',
-    searchPlaceholder: 'Search nodes to link...',
-    noNodesFound: 'No nodes found',
-    untitledNode: 'Untitled Node',
-    newNode: 'New Node',
-    style: 'Style:',
-    tabToCycle: 'Press Tab to cycle',
-    export: 'Export',
-    import: 'Load',
-    save: 'Save',
-    newCanvas: 'New',
-    saveSuccess: 'Saved',
-    saveFailed: 'Save failed',
-    saveUnavailable: 'Direct overwrite save is unavailable for this loaded file. Use Load to pick the file first.',
-    file: 'File',
-    path: 'Path',
-    pathUnavailable: 'Real path is unavailable in browser for security reasons',
-    notWritableSource: 'Current source is not writable (use Load picker first)',
-    exportSuccess: 'Exported',
-    importError: 'Invalid file format',
-    stormSystemTitle: 'Storm Speed Output System Structure',
-    shortcuts: 'Shortcuts',
-
-    showShortcuts: 'Expand',
-    hideShortcuts: 'Collapse',
-
-    emptyHint: 'Press ENTER to create',
-    settings: 'Settings',
-    language: 'Language',
-    languageZh: '中文',
-    languageEn: 'English',
-    theme: 'Theme',
-    lightMode: 'Light',
-    darkMode: 'Dark',
-    appearanceSettings: 'Appearance',
-    shortcutsSection: 'Shortcuts',
-    shortcutsSettings: 'Keyboard Shortcuts',
-    shortcutAction: 'Action',
-    shortcutKey: 'Shortcut',
-    clickToRecord: 'Click to record',
-    recording: 'Recording...',
-    pressAnyKey: 'Press any key combination',
-    resetToDefaults: 'Reset to Defaults',
-    cancel: 'Cancel',
-    shortcutConflict: 'Shortcut Conflict',
-    shortcutConflictDesc: 'This shortcut is already used by another action',
-
-    // Action names for shortcuts
-    actionCreateNode: 'Create Node',
-    actionCreateConnection: 'Create Connection from Node',
-    actionCreateNodeBelow: 'Create Node Below',
-    actionReturnConnection: 'Return Connection',
-    actionEditText: 'Edit Text',
-    actionDelete: 'Delete',
-    actionUndo: 'Undo',
-    actionRedo: 'Redo',
-    actionSave: 'Save',
-    actionZoomIn: 'Zoom In',
-    actionZoomOut: 'Zoom Out',
-    actionZoomReset: 'Reset Zoom',
-    actionMoveUp: 'Move Up',
-    actionMoveDown: 'Move Down',
-    actionMoveLeft: 'Move Left',
-    actionMoveRight: 'Move Right',
-    actionCycleStyle: 'Cycle Style',
-    actionSearch: 'Search Link',
-    actionOpenShortcuts: 'Open Shortcuts Settings',
-  }
-};
-
-// Helper function to format shortcut for display
-function formatShortcutLabel(config: { key: string; ctrl?: boolean; shift?: boolean; alt?: boolean; meta?: boolean }, ctrlKey: string): string {
-  const parts: string[] = [];
-  if (config.ctrl) parts.push(ctrlKey);
-  if (config.meta && ctrlKey !== 'Cmd') parts.push('Cmd');
-  if (config.alt) parts.push('Alt');
-  if (config.shift) parts.push('Shift');
-  if (config.key === ' ') {
-    parts.push('Space');
-  } else if (config.key.startsWith('Arrow')) {
-    parts.push(config.key.replace('Arrow', ''));
-  } else {
-    parts.push(config.key);
-  }
-  return parts.join('+');
-}
-
 export default function App() {
-  const [language, setLanguage] = useState<'zh' | 'en'>(() => {
+  const [language, setLanguage] = useState<AppLanguage>(() => {
     try {
       const savedLanguage = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
       if (savedLanguage === 'zh' || savedLanguage === 'en') return savedLanguage;
@@ -857,17 +644,6 @@ export default function App() {
 
   // Export image handled after helper function declarations
 
-  const getBestEffortFilePath = useCallback((file: any, fallback?: string) => {
-    const realPath = typeof file?.path === 'string' && file.path.trim().length > 0 ? file.path : null;
-    const relativePath = typeof file?.webkitRelativePath === 'string' && file.webkitRelativePath.trim().length > 0
-      ? file.webkitRelativePath
-      : null;
-    if (realPath) return realPath;
-    if (relativePath) return relativePath;
-    if (fallback && !fallback.includes('fakepath')) return fallback;
-    return null;
-  }, []);
-
   // #region debug-point C:graph-reset-trace
   useEffect(() => {
     const previous = previousGraphSizeRef.current;
@@ -1039,7 +815,15 @@ export default function App() {
   const selectedConnectionIdSet = useMemo(() => new Set(selectedConnectionIds), [selectedConnectionIds]);
   const getNode = (id: string) => nodeMap.get(id);
   const getConnection = (id: string) => connectionMap.get(id);
-  const getConnectionPairKey = (aId: string, bId: string) => aId < bId ? `${aId}::${bId}` : `${bId}::${aId}`;
+  const getConnectionFocus = useCallback(
+    (conn: Connection) => getConnectionFocusPoint(conn, getNode, lastDirection),
+    [getNode, lastDirection],
+  );
+  const getBestCurveBend = useCallback(
+    (fromId: string, toId: string, excludeConnId?: string) =>
+      chooseBestCurveBend({ fromId, toId, connections, getNode, excludeConnId }),
+    [connections, getNode],
+  );
 
   const getNodeBoxSize = useCallback((nodeText: string) => {
     return getAdaptiveTextBoxSize(nodeText, {
@@ -1062,9 +846,20 @@ export default function App() {
       vPadding: CONNECTION_LABEL_V_PADDING,
       lineHeight: CONNECTION_LABEL_LINE_HEIGHT,
       font: '500 10px Inter, ui-sans-serif, system-ui, sans-serif',
-      minHeight: 22,
+      minHeight: CONNECTION_LABEL_MIN_HEIGHT,
     });
   }, []);
+  const getConnectionGeometry = useCallback(
+    (conn: Connection) =>
+      buildConnectionGeometry({
+        conn,
+        getNode,
+        getNodeBoxSize,
+        lastDirection,
+        isNodeFocused: (nodeId: string) => focused?.type === 'node' && focused.id === nodeId,
+      }),
+    [focused, getNode, getNodeBoxSize, lastDirection],
+  );
 
   const resolveDeleteFallbackFocus = (
     nextNodes: Node[],
@@ -1100,228 +895,6 @@ export default function App() {
 
     return best;
   };
-
-
-
-
-  const getRenderedCurveBend = (fromId: string, toId: string, rawBend: number) => {
-    return fromId > toId ? -rawBend : rawBend;
-  };
-
-  const getConnectionCurveOffsetRaw = (
-    conn: Connection,
-    from: { x: number; y: number },
-    to: { x: number; y: number },
-  ) => {
-    const len = Math.hypot(to.x - from.x, to.y - from.y);
-    if (typeof conn.curveBendRatio === 'number' && Number.isFinite(conn.curveBendRatio)) {
-      return conn.curveBendRatio * len;
-    }
-    return conn.curveBend ?? 0;
-  };
-
-  const sampleConnectionCenterPath = (
-
-    from: { x: number; y: number },
-    to: { x: number; y: number },
-    renderedBend: number,
-    steps = 16,
-  ) => {
-    const dx = to.x - from.x;
-    const dy = to.y - from.y;
-    const len = Math.hypot(dx, dy);
-    if (len === 0) return [from, to];
-
-    const dirX = dx / len;
-    const dirY = dy / len;
-    const normalX = -dirY;
-    const normalY = dirX;
-    const tangentLen = Math.max(26, len * 0.22);
-
-    const c1 = {
-      x: from.x + dirX * tangentLen + normalX * renderedBend,
-      y: from.y + dirY * tangentLen + normalY * renderedBend,
-    };
-    const c2 = {
-      x: to.x - dirX * tangentLen + normalX * renderedBend,
-      y: to.y - dirY * tangentLen + normalY * renderedBend,
-    };
-
-    const points: { x: number; y: number }[] = [];
-    for (let i = 0; i <= steps; i++) {
-      const t = i / steps;
-      const mt = 1 - t;
-      points.push({
-        x: mt * mt * mt * from.x + 3 * mt * mt * t * c1.x + 3 * mt * t * t * c2.x + t * t * t * to.x,
-        y: mt * mt * mt * from.y + 3 * mt * mt * t * c1.y + 3 * mt * t * t * c2.y + t * t * t * to.y,
-      });
-    }
-    return points;
-  };
-
-  const getConnectionFocusPoint = (conn: Connection) => {
-    const from = getNode(conn.fromId);
-    if (!from) return null;
-
-    const toNode = conn.toId ? getNode(conn.toId) : null;
-    const to = toNode
-      ? { x: toNode.x, y: toNode.y }
-      : (conn.tempToPos ?? { x: from.x + lastDirection.x, y: from.y + lastDirection.y });
-
-    const rawBend = getConnectionCurveOffsetRaw(conn, from, to);
-    const renderedBend = conn.toId ? getRenderedCurveBend(conn.fromId, conn.toId, rawBend) : rawBend;
-
-
-    if (renderedBend === 0) {
-      return { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 };
-    }
-
-    const dx = to.x - from.x;
-    const dy = to.y - from.y;
-    const len = Math.hypot(dx, dy);
-    if (len === 0) return { x: from.x, y: from.y };
-
-    const dirX = dx / len;
-    const dirY = dy / len;
-    const normalX = -dirY;
-    const normalY = dirX;
-    const tangentLen = Math.max(26, len * 0.22);
-
-    const c1 = {
-      x: from.x + dirX * tangentLen + normalX * renderedBend,
-      y: from.y + dirY * tangentLen + normalY * renderedBend,
-    };
-    const c2 = {
-      x: to.x - dirX * tangentLen + normalX * renderedBend,
-      y: to.y - dirY * tangentLen + normalY * renderedBend,
-    };
-
-    const t = 0.5;
-    const mt = 1 - t;
-    return {
-      x: mt * mt * mt * from.x + 3 * mt * mt * t * c1.x + 3 * mt * t * t * c2.x + t * t * t * to.x,
-      y: mt * mt * mt * from.y + 3 * mt * mt * t * c1.y + 3 * mt * t * t * c2.y + t * t * t * to.y,
-    };
-  };
-
-  const pointToSegmentDistance = (
-    p: { x: number; y: number },
-    a: { x: number; y: number },
-    b: { x: number; y: number },
-  ) => {
-    const abx = b.x - a.x;
-    const aby = b.y - a.y;
-    const apx = p.x - a.x;
-    const apy = p.y - a.y;
-    const denom = abx * abx + aby * aby;
-    if (denom === 0) return Math.hypot(apx, apy);
-    const t = Math.max(0, Math.min(1, (apx * abx + apy * aby) / denom));
-    const qx = a.x + abx * t;
-    const qy = a.y + aby * t;
-    return Math.hypot(p.x - qx, p.y - qy);
-  };
-
-  const overlapPenalty = (pathA: { x: number; y: number }[], pathB: { x: number; y: number }[]) => {
-    const threshold = 22;
-    let score = 0;
-
-    for (const p of pathA) {
-      let best = Infinity;
-      for (let i = 0; i < pathB.length - 1; i++) {
-        const d = pointToSegmentDistance(p, pathB[i], pathB[i + 1]);
-        if (d < best) best = d;
-      }
-      if (best < threshold) {
-        const diff = threshold - best;
-        score += diff * diff;
-      }
-    }
-    return score;
-  };
-
-
-
-  const chooseBestCurveBend = (fromId: string, toId: string, excludeConnId?: string) => {
-    const from = getNode(fromId);
-    const to = getNode(toId);
-    if (!from || !to) return 0;
-
-    const completedConnections = connections.filter((c): c is Connection & { toId: string } => !!c.toId && c.id !== excludeConnId);
-    const pairKey = getConnectionPairKey(fromId, toId);
-    const existingPairCount = completedConnections.filter(c => getConnectionPairKey(c.fromId, c.toId) === pairKey).length;
-
-    const existingPaths = completedConnections
-
-
-      .map(c => {
-        const a = getNode(c.fromId);
-        const b = getNode(c.toId);
-        if (!a || !b) return null;
-        const rawBend = getConnectionCurveOffsetRaw(c, { x: a.x, y: a.y }, { x: b.x, y: b.y });
-        return sampleConnectionCenterPath(
-          { x: a.x, y: a.y },
-          { x: b.x, y: b.y },
-          getRenderedCurveBend(c.fromId, c.toId, rawBend),
-        );
-
-      })
-      .filter((p): p is { x: number; y: number }[] => !!p);
-
-    const maxLevel = Math.max(4, Math.ceil(existingPairCount / 2) + 3);
-    const candidates: number[] = [0];
-    for (let level = 1; level <= maxLevel; level++) {
-      const mag = CONNECTION_CURVE_BASE + (level - 1) * CONNECTION_CURVE_STEP;
-      candidates.push(mag, -mag);
-    }
-
-    let bestBend = 0;
-    let bestScore = Infinity;
-
-    for (const rawBend of candidates) {
-      const renderedBend = getRenderedCurveBend(fromId, toId, rawBend);
-      const testPath = sampleConnectionCenterPath(
-        { x: from.x, y: from.y },
-        { x: to.x, y: to.y },
-        renderedBend,
-      );
-
-      let score = 0;
-      for (const p of existingPaths) {
-        score += overlapPenalty(testPath, p);
-        score += overlapPenalty(p, testPath) * 0.5;
-      }
-
-      if (existingPairCount > 0 && rawBend === 0) score += 9999;
-      if (existingPairCount === 0 && rawBend !== 0) score += 40;
-      score += Math.abs(rawBend) * 0.35;
-
-
-
-
-      if (score < bestScore) {
-        bestScore = score;
-        bestBend = rawBend;
-      }
-    }
-
-    return bestBend;
-  };
-
-
-  // Helper to calculate intersection with node boundary
-
-  const getNodeRadius = (dx: number, dy: number) => {
-    if (dx === 0 && dy === 0) return 0;
-    const hw = NODE_WIDTH / 2 + 4;
-    const hh = NODE_HEIGHT / 2 + 4;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    const absDx = Math.abs(dx);
-    const absDy = Math.abs(dy);
-    const scaleX = absDx === 0 ? Infinity : hw / (absDx / dist);
-    const scaleY = absDy === 0 ? Infinity : hh / (absDy / dist);
-    return Math.min(scaleX, scaleY);
-  };
-
   const handleConnectionTextChange = (connId: string, newText: string) => {
     setConnections(prev => prev.map(c => c.id === connId ? { ...c, text: newText } : c));
   };
@@ -1332,7 +905,7 @@ export default function App() {
 
   // Create a new node
   const createNode = (x: number, y: number, text = '') => {
-    const id = Math.random().toString(36).substr(2, 9);
+    const id = createGraphId();
     const newNode = { id, x, y, text };
     setNodes(prev => [...prev, newNode]);
     return newNode;
@@ -1345,7 +918,7 @@ export default function App() {
     tempPos?: { x: number; y: number },
     curveBendOverride?: number,
   ) => {
-    const id = Math.random().toString(36).substr(2, 9);
+    const id = createGraphId();
     const newConn: Connection = {
       id,
       fromId,
@@ -1353,22 +926,18 @@ export default function App() {
       text: '',
       style: lastStyle,
       tempToPos: tempPos,
-      curveBend: typeof curveBendOverride === 'number' ? curveBendOverride : (toId ? chooseBestCurveBend(fromId, toId, id) : 0),
+      curveBend:
+        typeof curveBendOverride === 'number'
+          ? curveBendOverride
+          : (toId
+              ? chooseBestCurveBend({ fromId, toId, connections, getNode, excludeConnId: id })
+              : 0),
       curveBendRatio: undefined,
 
     };
     setConnections(prev => [...prev, newConn]);
     return newConn;
   };
-
-  // Helper to check if a keyboard event matches a shortcut config
-  const matchesShortcut = useCallback((e: KeyboardEvent, config: { key: string; ctrl?: boolean; shift?: boolean; alt?: boolean; meta?: boolean }) => {
-    const keyMatch = e.key === config.key || e.code === config.key || (config.key === 'Delete' && e.key === 'Backspace');
-    const ctrlMatch = !!(e.ctrlKey || e.metaKey) === !!(config.ctrl || config.meta);
-    const shiftMatch = e.shiftKey === !!config.shift;
-    const altMatch = e.altKey === !!config.alt;
-    return keyMatch && ctrlMatch && shiftMatch && altMatch;
-  }, []);
 
   // Keyboard Handlers
   useEffect(() => {
@@ -1481,7 +1050,7 @@ export default function App() {
           const target = searchResults[selectedIndex];
           if (target && focused?.type === 'connection') {
             const pendingConn = getConnection(focused.id);
-            const nextBend = pendingConn ? chooseBestCurveBend(pendingConn.fromId, target.id, pendingConn.id) : 0;
+            const nextBend = pendingConn ? getBestCurveBend(pendingConn.fromId, target.id, pendingConn.id) : 0;
             const nextConns = connections.map(c =>
               c.id === focused.id ? { ...c, toId: target.id, tempToPos: undefined, curveBend: nextBend, curveBendRatio: undefined } : c
 
@@ -1560,7 +1129,7 @@ export default function App() {
             const conn = getConnection(focused.id);
             if (!conn) return;
             const newConns = connections.filter(c => c.id !== conn.id);
-            const connFocusPoint = getConnectionFocusPoint(conn) ?? { x: 0, y: 0 };
+            const connFocusPoint = getConnectionFocus(conn) ?? { x: 0, y: 0 };
             const fallbackFocus = resolveDeleteFallbackFocus(nodes, newConns, connFocusPoint);
 
             if (fallbackFocus) {
@@ -1581,7 +1150,7 @@ export default function App() {
           });
           connections.forEach((c) => {
             if (!connDeleteSet.has(c.id)) return;
-            const p = getConnectionFocusPoint(c);
+            const p = getConnectionFocus(c);
             if (p) deletedPoints.push(p);
           });
 
@@ -1764,7 +1333,7 @@ export default function App() {
             const y = conn.tempToPos?.y ?? (fromNode ? fromNode.y + lastDirection.y : 0);
             const newNode = createNode(x, y);
             nodeSourceRef.current[newNode.id] = conn.fromId;
-            const nextBend = chooseBestCurveBend(conn.fromId, newNode.id, conn.id);
+            const nextBend = getBestCurveBend(conn.fromId, newNode.id, conn.id);
 
             const nextConns = connections.map(c => c.id === conn.id ? { ...c, toId: newNode.id, tempToPos: undefined, curveBend: nextBend, curveBendRatio: undefined } : c);
 
@@ -1863,7 +1432,7 @@ export default function App() {
       if (node) currentPos = { x: node.x, y: node.y };
     } else {
       const conn = getConnection(focused.id);
-      if (conn) currentPos = getConnectionFocusPoint(conn);
+      if (conn) currentPos = getConnectionFocus(conn);
     }
     if (!currentPos) return;
 
@@ -1874,7 +1443,7 @@ export default function App() {
     }
     for (const c of connections) {
       if (focused.type === 'connection' && focused.id === c.id) continue;
-      const pos = getConnectionFocusPoint(c);
+      const pos = getConnectionFocus(c);
       if (!pos) continue;
       candidates.push({ type: 'connection', id: c.id, x: pos.x, y: pos.y });
     }
@@ -2330,7 +1899,7 @@ export default function App() {
           nextConns = connections.map(c => {
             if (c.id !== draggingEndpoint.connId) return c;
             if (snapNode) {
-              const nextBend = chooseBestCurveBend(c.fromId, snapNode.id, c.id);
+              const nextBend = getBestCurveBend(c.fromId, snapNode.id, c.id);
               return { ...c, toId: snapNode.id, tempToPos: undefined, curveBend: nextBend, curveBendRatio: undefined };
 
             }
@@ -2341,7 +1910,7 @@ export default function App() {
           nextConns = connections.map(c => {
             if (c.id !== draggingEndpoint.connId) return c;
             if (snapNode) {
-              const nextBend = chooseBestCurveBend(snapNode.id, draggingEndpoint.fixedNodeId, c.id);
+              const nextBend = getBestCurveBend(snapNode.id, draggingEndpoint.fixedNodeId, c.id);
               return {
                 ...c,
                 fromId: snapNode.id,
@@ -2890,86 +2459,13 @@ export default function App() {
       const x = nodePosition.x - nodeWidth / 2;
       const y = nodePosition.y - nodeHeight / 2;
 
-      let fill = isDarkTheme ? '#111827' : '#ffffff';
-      let stroke = isDarkTheme ? 'rgba(148,163,184,0.18)' : '#E2E8F0';
-      let textColor = isDarkTheme ? '#E2E8F0' : '#334155';
-      let lineWidth = 2 * renderScale;
-      if (isFocused) {
-        switch (nodeStyle) {
-          case 'text':
-            fill = 'rgba(255,255,255,0)';
-            stroke = 'transparent';
-            textColor = isDarkTheme ? '#E2E8F0' : '#334155';
-            lineWidth = 0;
-            break;
-          case 'note':
-            fill = isDarkTheme ? '#422006' : '#fefce8';
-            stroke = isDarkTheme ? '#facc15' : '#fde68a';
-            textColor = isDarkTheme ? '#fef3c7' : '#92400e';
-            break;
-          case 'warning':
-            fill = isDarkTheme ? '#3f0f12' : '#ffffff';
-            stroke = isDarkTheme ? '#f87171' : '#fca5a5';
-            textColor = isDarkTheme ? '#fecaca' : '#b91c1c';
-            break;
-          case 'default':
-          default:
-            fill = isDarkTheme ? '#0f2746' : '#eff6ff';
-            stroke = isDarkTheme ? '#60a5fa' : '#3B82F6';
-            textColor = isDarkTheme ? '#dbeafe' : '#334155';
-            break;
-        }
-      } else if (isSelected) {
-        switch (nodeStyle) {
-          case 'text':
-            fill = 'rgba(255,255,255,0)';
-            stroke = isDarkTheme ? 'rgba(96,165,250,0.65)' : 'rgba(59,130,246,0.5)';
-            textColor = isDarkTheme ? '#E2E8F0' : '#334155';
-            lineWidth = 1.5 * renderScale;
-            break;
-          case 'note':
-            fill = isDarkTheme ? 'rgba(120,53,15,0.82)' : 'rgba(254,252,232,0.8)';
-            stroke = isDarkTheme ? '#facc15' : '#fde68a';
-            textColor = isDarkTheme ? '#fef3c7' : '#92400e';
-            break;
-          case 'warning':
-            fill = isDarkTheme ? 'rgba(127,29,29,0.72)' : 'rgba(254,242,242,0.6)';
-            stroke = isDarkTheme ? '#f87171' : '#fca5a5';
-            textColor = isDarkTheme ? '#fecaca' : '#b91c1c';
-            break;
-          case 'default':
-          default:
-            fill = isDarkTheme ? 'rgba(30,64,175,0.42)' : 'rgba(239,246,255,0.6)';
-            stroke = isDarkTheme ? '#60a5fa' : '#93C5FD';
-            textColor = isDarkTheme ? '#dbeafe' : '#334155';
-            break;
-        }
-      } else {
-        switch (nodeStyle) {
-          case 'text':
-            fill = 'rgba(255,255,255,0)';
-            stroke = 'transparent';
-            textColor = isDarkTheme ? '#E2E8F0' : '#334155';
-            lineWidth = 0;
-            break;
-          case 'note':
-            fill = isDarkTheme ? '#2b1d07' : '#fefce8';
-            stroke = isDarkTheme ? '#a16207' : '#fde68a';
-            textColor = isDarkTheme ? '#fef3c7' : '#92400e';
-            break;
-          case 'warning':
-            fill = isDarkTheme ? '#1f1114' : '#ffffff';
-            stroke = isDarkTheme ? '#b91c1c' : '#fca5a5';
-            textColor = isDarkTheme ? '#fca5a5' : '#b91c1c';
-            break;
-          case 'default':
-          default:
-            fill = isDarkTheme ? '#111827' : '#ffffff';
-            stroke = isDarkTheme ? 'rgba(148,163,184,0.18)' : '#E2E8F0';
-            textColor = isDarkTheme ? '#E2E8F0' : '#334155';
-            break;
-        }
-      }
+      const { fill, stroke, textColor, lineWidth } = getNodeCanvasVisual(
+        nodeStyle,
+        isFocused,
+        isSelected,
+        isDarkTheme,
+        renderScale,
+      );
 
       drawNodeShadow(nodeStyle, isFocused, isSelected);
       activeCtx.fillStyle = fill;
@@ -3007,48 +2503,11 @@ export default function App() {
   }, [connections, focused?.id, focused?.type, getConnectionLabelSize, getConnectionCurveOffsetRaw, getEdgePoint, getNode, getNodeBoxSize, isDarkTheme, lastDirection, nodes, selectedNodeIds, t, themeColors]);
 
   const getConnectionHandlePoints = (conn: Connection) => {
-    const fromNode = getNode(conn.fromId);
-    if (!fromNode) return null;
-
-    const toNode = conn.toId ? getNode(conn.toId) : null;
-    const rawStartX = fromNode.x;
-    const rawStartY = fromNode.y;
-    const rawEndX = toNode ? toNode.x : (conn.tempToPos?.x ?? rawStartX + lastDirection.x);
-    const rawEndY = toNode ? toNode.y : (conn.tempToPos?.y ?? rawStartY + lastDirection.y);
-
-    const curveOffsetRaw = getConnectionCurveOffsetRaw(conn, { x: rawStartX, y: rawStartY }, { x: rawEndX, y: rawEndY });
-    const directionMultiplier = conn.toId && conn.fromId > conn.toId ? -1 : 1;
-    const curveOffset = curveOffsetRaw * directionMultiplier;
-
-
-    const centerDx = rawEndX - rawStartX;
-    const centerDy = rawEndY - rawStartY;
-    const centerLen = Math.hypot(centerDx, centerDy);
-    const normalX = centerLen === 0 ? 0 : -centerDy / centerLen;
-    const normalY = centerLen === 0 ? 0 : centerDx / centerLen;
-
-    const tangentLen = Math.max(26, centerLen * 0.22);
-    const c1CenterX = rawStartX + (centerLen === 0 ? 0 : (centerDx / centerLen) * tangentLen) + normalX * curveOffset;
-    const c1CenterY = rawStartY + (centerLen === 0 ? 0 : (centerDy / centerLen) * tangentLen) + normalY * curveOffset;
-    const c2CenterX = rawEndX - (centerLen === 0 ? 0 : (centerDx / centerLen) * tangentLen) + normalX * curveOffset;
-    const c2CenterY = rawEndY - (centerLen === 0 ? 0 : (centerDy / centerLen) * tangentLen) + normalY * curveOffset;
-
-    const startPoint = getEdgePoint(
-      { x: c1CenterX, y: c1CenterY },
-      { x: rawStartX, y: rawStartY },
-      fromNode.id,
-    );
-    const endPoint = toNode
-      ? getEdgePoint(
-          { x: c2CenterX, y: c2CenterY },
-          { x: rawEndX, y: rawEndY },
-          toNode.id,
-        )
-      : { x: rawEndX, y: rawEndY };
-
+    const geometry = getConnectionGeometry(conn);
+    if (!geometry) return null;
     return {
-      start: { x: startPoint.x, y: startPoint.y },
-      end: { x: endPoint.x, y: endPoint.y },
+      start: geometry.start,
+      end: geometry.end,
     };
   };
 
@@ -3301,7 +2760,7 @@ export default function App() {
 
             const labelBox = (conn.text || isFocused) ? getConnectionLabelSize(conn.text) : null;
             const labelWidth = labelBox?.width ?? CONNECTION_LABEL_MIN_WIDTH;
-            const labelHeight = labelBox?.height ?? 22;
+            const labelHeight = labelBox?.height ?? CONNECTION_LABEL_MIN_HEIGHT;
             const labelLines = labelBox?.lines ?? [''];
             const labelX = curveOffset === 0
               ? (startX + endX) / 2
@@ -3496,114 +2955,6 @@ export default function App() {
           const nodeBox = getNodeBoxSize(node.text);
           const nodeStyle = node.style || 'default';
 
-          // Define styles for different node types
-          const getNodeStyleClasses = (style: NodeStyle, focused: boolean, selected: boolean) => {
-            if (isDarkTheme) {
-              if (focused) {
-                switch (style) {
-                  case 'text':
-                    return 'bg-transparent border-transparent shadow-none';
-                  case 'note':
-                    return 'bg-amber-950/90 border-amber-400 shadow-lg z-20';
-                  case 'warning':
-                    return 'bg-rose-950/80 border-rose-400 shadow-lg z-20 ring-2 ring-rose-500/20';
-                  case 'default':
-                  default:
-                    return 'bg-blue-950/80 border-blue-400 shadow-lg z-20';
-                }
-              }
-              if (selected) {
-                switch (style) {
-                  case 'text':
-                    return 'bg-transparent border-blue-400/60 shadow-none z-[15]';
-                  case 'note':
-                    return 'bg-amber-950/70 border-amber-500/80 shadow-md z-[15]';
-                  case 'warning':
-                    return 'bg-rose-950/60 border-rose-400/80 shadow-md z-[15]';
-                  case 'default':
-                  default:
-                    return 'bg-blue-950/55 border-blue-400/80 shadow-md z-[15]';
-                }
-              }
-              switch (style) {
-                case 'text':
-                  return 'bg-transparent border-transparent shadow-none hover:bg-slate-800/35';
-                case 'note':
-                  return 'bg-amber-950/50 border-amber-700 shadow-sm hover:border-amber-500';
-                case 'warning':
-                  return 'bg-rose-950/35 border-rose-800 shadow-sm hover:border-rose-500';
-                case 'default':
-                default:
-                  return 'bg-slate-900/85 border-slate-700 shadow-sm hover:border-slate-500';
-              }
-            }
-            if (focused) {
-              switch (style) {
-                case 'text':
-                  return 'bg-transparent border-transparent shadow-none';
-                case 'note':
-                  return 'bg-yellow-100 border-yellow-400 shadow-lg z-20';
-                case 'warning':
-                  return 'bg-white border-red-500 shadow-lg z-20 ring-2 ring-red-200';
-                case 'default':
-                default:
-                  return 'bg-blue-50 border-blue-500 shadow-lg z-20';
-              }
-            }
-            if (selected) {
-              switch (style) {
-                case 'text':
-                  return 'bg-transparent border-blue-300/50 shadow-none z-[15]';
-                case 'note':
-                  return 'bg-yellow-50/80 border-yellow-300 shadow-md z-[15]';
-                case 'warning':
-                  return 'bg-red-50/60 border-red-300 shadow-md z-[15]';
-                case 'default':
-                default:
-                  return 'bg-blue-50/60 border-blue-300 shadow-md z-[15]';
-              }
-            }
-            // Unfocused, unselected
-            switch (style) {
-              case 'text':
-                return 'bg-transparent border-transparent shadow-none hover:bg-slate-50/50';
-              case 'note':
-                return 'bg-yellow-50 border-yellow-200 shadow-sm hover:border-yellow-300';
-              case 'warning':
-                return 'bg-white border-red-400 shadow-sm hover:border-red-500';
-              case 'default':
-              default:
-                return 'bg-white border-slate-200 shadow-sm hover:border-slate-300';
-            }
-          };
-
-          const getTextClasses = (style: NodeStyle) => {
-            if (isDarkTheme) {
-              switch (style) {
-                case 'text':
-                  return 'text-slate-200';
-                case 'note':
-                  return 'text-amber-100';
-                case 'warning':
-                  return 'text-rose-200 font-semibold';
-                case 'default':
-                default:
-                  return 'text-slate-100';
-              }
-            }
-            switch (style) {
-              case 'text':
-                return 'text-slate-700';
-              case 'note':
-                return 'text-yellow-900';
-              case 'warning':
-                return 'text-red-600 font-semibold';
-              case 'default':
-              default:
-                return 'text-slate-700';
-            }
-          };
-
           const nodeLines = nodeBox.lines;
           const textAlignClass = nodeLines.length > 1 ? 'text-left' : 'text-center';
           return (
@@ -3623,7 +2974,7 @@ export default function App() {
               onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
               style={{ width: nodeBox.width, height: nodeBox.height }}
               className={`absolute flex items-center justify-center rounded-xl border-2 transition-colors duration-200 cursor-grab active:cursor-grabbing z-10
-                ${getNodeStyleClasses(nodeStyle, isFocused, isSelected)}`}
+                ${getNodeStyleClasses(nodeStyle, isFocused, isSelected, isDarkTheme)}`}
 
             >
               {isFocused && (
@@ -3650,7 +3001,7 @@ export default function App() {
                 />
               )}
               {!(isFocused && isEditing) && (
-                <span className={`text-sm font-medium whitespace-pre-wrap break-words px-2 relative z-0 w-full ${textAlignClass} ${getTextClasses(nodeStyle)}`}>
+                <span className={`text-sm font-medium whitespace-pre-wrap break-words px-2 relative z-0 w-full ${textAlignClass} ${getNodeTextClasses(nodeStyle, isDarkTheme)}`}>
                   {node.text || <span className="app-node-placeholder italic">{t.newNode}</span>}
                 </span>
               )}
@@ -3839,7 +3190,7 @@ export default function App() {
                     onClick={() => {
                       if (focused?.type === 'connection') {
                         const pendingConn = getConnection(focused.id);
-                        const nextBend = pendingConn ? chooseBestCurveBend(pendingConn.fromId, node.id, pendingConn.id) : 0;
+                        const nextBend = pendingConn ? getBestCurveBend(pendingConn.fromId, node.id, pendingConn.id) : 0;
                         setConnections(prev => prev.map(c => c.id === focused.id ? { ...c, toId: node.id, tempToPos: undefined, curveBend: nextBend, curveBendRatio: undefined } : c));
 
                         setSearchQuery(null);
@@ -4036,275 +3387,6 @@ export default function App() {
         t={t}
         ctrlKey={ctrlKey}
       />
-    </div>
-  );
-}
-
-// Shortcuts Settings Modal Component
-interface ShortcutsModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  shortcuts: KeyboardShortcuts;
-  onSave: (shortcuts: KeyboardShortcuts) => void;
-  theme: 'light' | 'dark';
-  onThemeSave: (theme: 'light' | 'dark') => void;
-  t: typeof TRANSLATIONS.en;
-  ctrlKey: string;
-}
-
-function ShortcutsModal({ isOpen, onClose, shortcuts, onSave, theme, onThemeSave, t, ctrlKey }: ShortcutsModalProps) {
-  const [localShortcuts, setLocalShortcuts] = useState<KeyboardShortcuts>(shortcuts);
-  const [localTheme, setLocalTheme] = useState<'light' | 'dark'>(theme);
-  const [recordingAction, setRecordingAction] = useState<string | null>(null);
-  const [conflicts, setConflicts] = useState<Set<string>>(new Set());
-  const modalRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (isOpen) {
-      setLocalShortcuts(shortcuts);
-      setLocalTheme(theme);
-      setConflicts(new Set());
-      setRecordingAction(null);
-    }
-  }, [isOpen, shortcuts, theme]);
-
-  useEffect(() => {
-    if (!isOpen || !recordingAction) return;
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-
-      // Ignore modifier-only keys
-      if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return;
-
-      const newShortcut = {
-        key: e.key,
-        ctrl: e.ctrlKey || false,
-        shift: e.shiftKey || false,
-        alt: e.altKey || false,
-        meta: e.metaKey || false,
-      };
-
-      setLocalShortcuts(prev => ({
-        ...prev,
-        [recordingAction]: newShortcut,
-      }));
-
-      setRecordingAction(null);
-      checkConflicts({ ...localShortcuts, [recordingAction]: newShortcut });
-    };
-
-    window.addEventListener('keydown', handleKeyDown, true);
-    return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [isOpen, recordingAction, localShortcuts]);
-
-  // Define action groups that can share the same shortcut (they operate in different contexts)
-  const compatibleGroups: string[][] = [
-    // Global createNode and connection createNode can share Enter
-    ['createNode', 'createConnection'],
-  ];
-
-  const checkConflicts = (current: KeyboardShortcuts) => {
-    const seen = new Map<string, string>();
-    const newConflicts = new Set<string>();
-
-    Object.entries(current).forEach(([action, config]) => {
-      const keyStr = formatShortcut(config);
-
-      if (seen.has(keyStr)) {
-        const existingAction = seen.get(keyStr)!;
-
-        // Check if these actions are in a compatible group
-        const isCompatible = compatibleGroups.some(group =>
-          group.includes(action) && group.includes(existingAction)
-        );
-
-        if (!isCompatible) {
-          newConflicts.add(action);
-          newConflicts.add(existingAction);
-        }
-      } else {
-        seen.set(keyStr, action);
-      }
-    });
-
-    setConflicts(newConflicts);
-  };
-
-  const formatShortcut = (config: { key: string; ctrl?: boolean; shift?: boolean; alt?: boolean; meta?: boolean }) => {
-    const parts: string[] = [];
-    if (config.ctrl) parts.push(ctrlKey);
-    if (config.meta && ctrlKey !== 'Cmd') parts.push('Cmd');
-    if (config.alt) parts.push('Alt');
-    if (config.shift) parts.push('Shift');
-    if (config.key === ' ') {
-      parts.push('Space');
-    } else if (config.key.startsWith('Arrow')) {
-      parts.push(config.key.replace('Arrow', ''));
-    } else {
-      parts.push(config.key);
-    }
-    return parts.join('+');
-  };
-
-  const handleReset = () => {
-    setLocalShortcuts(DEFAULT_SHORTCUTS);
-    checkConflicts(DEFAULT_SHORTCUTS);
-  };
-
-  const handleSave = () => {
-    if (conflicts.size > 0) {
-      alert(t.shortcutConflict);
-      return;
-    }
-    onThemeSave(localTheme);
-    onSave(localShortcuts);
-    onClose();
-  };
-
-  const actionNames: { key: keyof KeyboardShortcuts; label: string }[] = [
-    { key: 'createNode', label: t.actionCreateNode },
-    { key: 'createConnection', label: t.actionCreateConnection },
-    { key: 'createNodeBelow', label: t.actionCreateNodeBelow },
-    { key: 'returnConnection', label: t.actionReturnConnection },
-    { key: 'editText', label: t.actionEditText },
-    { key: 'delete', label: t.actionDelete },
-    { key: 'undo', label: t.actionUndo },
-    { key: 'redo', label: t.actionRedo },
-    { key: 'save', label: t.actionSave },
-    { key: 'zoomIn', label: t.actionZoomIn },
-    { key: 'zoomOut', label: t.actionZoomOut },
-    { key: 'zoomReset', label: t.actionZoomReset },
-    { key: 'moveUp', label: t.actionMoveUp },
-    { key: 'moveDown', label: t.actionMoveDown },
-    { key: 'moveLeft', label: t.actionMoveLeft },
-    { key: 'moveRight', label: t.actionMoveRight },
-    { key: 'cycleStyle', label: t.actionCycleStyle },
-    { key: 'search', label: t.actionSearch },
-    { key: 'openShortcuts', label: t.actionOpenShortcuts },
-  ];
-
-  if (!isOpen) return null;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop */}
-      <div className="app-modal-backdrop absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
-
-      {/* Modal */}
-      <div
-        ref={modalRef}
-        className="app-modal relative bg-white rounded-2xl shadow-2xl w-[480px] max-h-[80vh] flex flex-col"
-      >
-        {/* Header */}
-        <div className="app-modal-header flex items-center justify-between px-6 py-4 border-b border-slate-200">
-          <h2 className="app-modal-title text-lg font-semibold text-slate-800">{t.settings}</h2>
-          <button
-            onClick={onClose}
-            className="app-button p-1 hover:bg-slate-100 rounded-lg transition-colors text-slate-400 hover:text-slate-600"
-          >
-            <Minus size={20} />
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-4">
-          <div className="space-y-4">
-            <div className="app-settings-section rounded-xl border border-slate-200 p-4">
-              <div className="app-settings-heading text-sm font-semibold">{t.appearanceSettings}</div>
-              <div className="mt-3 flex items-center gap-2">
-                <button
-                  onClick={() => setLocalTheme('light')}
-                  className={`app-segment-button px-3 py-2 rounded-lg transition-colors text-sm font-medium flex items-center gap-2 ${
-                    localTheme === 'light'
-                      ? 'app-segment-active bg-slate-900 text-white'
-                      : 'text-slate-600 hover:bg-slate-100'
-                  }`}
-                >
-                  <Sun size={16} />
-                  {t.lightMode}
-                </button>
-                <button
-                  onClick={() => setLocalTheme('dark')}
-                  className={`app-segment-button px-3 py-2 rounded-lg transition-colors text-sm font-medium flex items-center gap-2 ${
-                    localTheme === 'dark'
-                      ? 'app-segment-active bg-slate-900 text-white'
-                      : 'text-slate-600 hover:bg-slate-100'
-                  }`}
-                >
-                  <Moon size={16} />
-                  {t.darkMode}
-                </button>
-              </div>
-            </div>
-            <div className="app-settings-section rounded-xl border border-slate-200 p-4">
-              <div className="flex items-center justify-between gap-4 mb-3">
-                <div className="app-settings-heading text-sm font-semibold">{t.shortcutsSection}</div>
-                <p className="app-icon-muted text-xs">{t.clickToRecord}</p>
-              </div>
-              <div className="space-y-2">
-                {actionNames.map(({ key, label }) => {
-                  const config = localShortcuts[key];
-                  const isRecording = recordingAction === key;
-                  const hasConflict = conflicts.has(key);
-
-                  return (
-                    <div
-                      key={key}
-                      className={`app-shortcut-row flex items-center justify-between p-3 rounded-xl border transition-all ${
-                        hasConflict
-                          ? 'bg-red-50 border-red-200'
-                          : isRecording
-                            ? 'bg-blue-50 border-blue-300 ring-2 ring-blue-200'
-                            : 'bg-slate-50 border-slate-200 hover:border-slate-300'
-                      }`}
-                    >
-                      <span className="app-row-label text-sm font-medium text-slate-700">{label}</span>
-                      <button
-                        onClick={() => setRecordingAction(isRecording ? null : key)}
-                        className={`app-shortcut-chip px-3 py-1.5 rounded-lg text-xs font-semibold transition-all min-w-[120px] ${
-                          isRecording
-                            ? 'bg-blue-500 text-white animate-pulse'
-                            : hasConflict
-                              ? 'bg-red-100 text-red-600 border border-red-200'
-                              : 'bg-white border border-slate-300 text-slate-600 hover:border-slate-400'
-                        }`}
-                      >
-                        {isRecording ? t.recording : formatShortcut(config)}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="app-modal-footer flex items-center justify-between px-6 py-4 border-t border-slate-200">
-          <button
-            onClick={handleReset}
-            className="app-button px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors"
-          >
-            {t.resetToDefaults}
-          </button>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={onClose}
-              className="app-button px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors"
-            >
-              {t.cancel}
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={conflicts.size > 0}
-              className="px-4 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 disabled:bg-slate-300 disabled:cursor-not-allowed rounded-lg transition-colors"
-            >
-              {t.save}
-            </button>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
