@@ -405,11 +405,15 @@ export default function App() {
       setNodes(state.nodes);
       setConnections(state.connections);
       setFocused(state.focused);
+      setSelectedNodeIds([]);
+      setSelectedConnectionIds([]);
       setHistory(prev => ({ ...prev, index: nextIndex }));
     } else if (history.index === 0) {
       setNodes([]);
       setConnections([]);
       setFocused(null);
+      setSelectedNodeIds([]);
+      setSelectedConnectionIds([]);
       setHistory(prev => ({ ...prev, index: -1 }));
     }
   }, [history]);
@@ -421,6 +425,8 @@ export default function App() {
       setNodes(state.nodes);
       setConnections(state.connections);
       setFocused(state.focused);
+      setSelectedNodeIds([]);
+      setSelectedConnectionIds([]);
       setHistory(prev => ({ ...prev, index: nextIndex }));
     }
   }, [history]);
@@ -1977,7 +1983,7 @@ export default function App() {
     prevFocusedRef.current = focused;
     if (!focusedChanged) return;
 
-    if (!focused || isPanning || draggingEndpoint || draggingCurveControl || (draggingNodeIds && draggingNodeIds.length > 0) || focused.type === 'node') return;
+    if (!focused || isPanning || draggingEndpoint || draggingCurveControl || (draggingNodeIds && draggingNodeIds.length > 0)) return;
 
     if (focused.type === 'connection' && skipNextConnectionCenterRef.current) {
       skipNextConnectionCenterRef.current = false;
