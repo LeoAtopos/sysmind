@@ -744,6 +744,7 @@ export default function App() {
   const beforePreviousFocusRef = useRef<FocusedElement>(null);
   const clearBeforePreviousOnNextFocusRef = useRef(false);
   const skipAutoFocusOnceRef = useRef(false);
+  const prevFocusedRef = useRef<FocusedElement | null>(null);
   const skipFocusHistorySyncOnceRef = useRef(false);
 
   // Native wheel event handler ref to allow adding/removing non-passive listener
@@ -2399,14 +2400,15 @@ export default function App() {
   useEffect(() => {
     if (skipAutoFocusOnceRef.current) {
       skipAutoFocusOnceRef.current = false;
-    } else if (focused && inputRef.current) {
+    } else if (isEditing && focused && inputRef.current) {
       inputRef.current.focus();
     }
 
+    const focusedChanged = focused?.type !== prevFocusedRef.current?.type || focused?.id !== prevFocusedRef.current?.id;
+    prevFocusedRef.current = focused;
+    if (!focusedChanged) return;
+
     if (!focused || isPanning || draggingEndpoint || draggingCurveControl || (draggingNodeIds && draggingNodeIds.length > 0) || focused.type === 'node') return;
-
-
-
 
     if (focused.type === 'connection' && skipNextConnectionCenterRef.current) {
       skipNextConnectionCenterRef.current = false;
@@ -2436,13 +2438,107 @@ export default function App() {
     }
 
     if (targetX !== 0 || targetY !== 0) {
-      setCanvasView(prev => ({
-        ...prev,
-        x: window.innerWidth / 2 - targetX * prev.scale,
-        y: window.innerHeight / 2 - targetY * prev.scale
-      }));
+      setCanvasView(prev => {
+        const margin = 80;
+        const visLeft = -prev.x / prev.scale;
+        const visTop = -prev.y / prev.scale;
+        const visRight = (window.innerWidth - prev.x) / prev.scale;
+        const visBottom = (window.innerHeight - prev.y) / prev.scale;
+
+        let points: { x: number; y: number }[] = [];
+
+        if (focused?.type === 'connection') {
+          const conn = getConnection(focused.id);
+          if (conn) {
+            const from = getNode(conn.fromId);
+            const to = conn.toId ? getNode(conn.toId) : null;
+            if (from) points.push({ x: from.x, y: from.y });
+            if (to) points.push({ x: to.x, y: to.y });
+          }
+        } else if (focused?.type === 'node') {
+          const node = getNode(focused.id);
+          if (node) points.push({ x: node.x, y: node.y });
+        }
+
+        if (points.length === 0) {
+          points.push({ x: targetX, y: targetY });
+        }
+
+        const anyVisible = points.some(p =>
+          p.x >= visLeft + margin && p.x <= visRight - margin &&
+          p.y >= visTop + margin && p.y <= visBottom - margin
+        );
+        if (anyVisible) return prev;
+
+        const minX = Math.min(...points.map(p => p.x));
+        const maxX = Math.max(...points.map(p => p.x));
+        const minY = Math.min(...points.map(p => p.y));
+        const maxY = Math.max(...points.map(p => p.y));
+
+        const contentW = maxX - minX + margin * 2;
+        const contentH = maxY - minY + margin * 2;
+        const vpW = window.innerWidth;
+        const vpH = window.innerHeight;
+
+        let newScale = prev.scale;
+        if (points.length > 1 && (contentW * prev.scale > vpW || contentH * prev.scale > vpH)) {
+          newScale = Math.min(vpW / contentW, vpH / contentH);
+          newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, Number(newScale.toFixed(3))));
+        }
+
+        const centerX = (minX + maxX) / 2;
+        const centerY = (minY + maxY) / 2;
+        return {
+          x: vpW / 2 - centerX * newScale,
+          y: vpH / 2 - centerY * newScale,
+          scale: newScale,
+        };
+      });
     }
-  }, [focused, nodes, connections, isPanning, draggingNodeIds, draggingEndpoint, draggingCurveControl]);
+  }, [focused, nodes, connections, isPanning, draggingNodeIds, draggingEndpoint, draggingCurveControl, isEditing]);
+
+  // Normalize view after panning/zooming - ensure at least some content is visible
+  const prevInteractingRef = useRef(false);
+  useEffect(() => {
+    const interacting = !!(isPanning || draggingNodeIds || draggingEndpoint || draggingCurveControl);
+    const wasInteracting = prevInteractingRef.current;
+    prevInteractingRef.current = interacting;
+    if (interacting || !wasInteracting) return;
+    if (nodes.length === 0) return;
+
+    setCanvasView(prev => {
+      const visLeft = -prev.x / prev.scale;
+      const visTop = -prev.y / prev.scale;
+      const visRight = (window.innerWidth - prev.x) / prev.scale;
+      const visBottom = (window.innerHeight - prev.y) / prev.scale;
+      const margin = 100;
+
+      const hasVisibleNode = nodes.some(n =>
+        n.x >= visLeft - margin && n.x <= visRight + margin &&
+        n.y >= visTop - margin && n.y <= visBottom + margin
+      );
+
+      if (hasVisibleNode) return prev;
+
+      const vpCenterX = (visLeft + visRight) / 2;
+      const vpCenterY = (visTop + visBottom) / 2;
+      let nearest = nodes[0];
+      let minDist = Infinity;
+      for (const n of nodes) {
+        const dist = Math.hypot(n.x - vpCenterX, n.y - vpCenterY);
+        if (dist < minDist) {
+          minDist = dist;
+          nearest = n;
+        }
+      }
+
+      return {
+        ...prev,
+        x: window.innerWidth / 2 - nearest.x * prev.scale,
+        y: window.innerHeight / 2 - nearest.y * prev.scale,
+      };
+    });
+  }, [isPanning, draggingNodeIds, draggingEndpoint, draggingCurveControl, nodes]);
 
 
   // Auto-focus input
@@ -3583,9 +3679,16 @@ export default function App() {
             const normalX = centerLen === 0 ? 0 : -centerDy / centerLen;
             const normalY = centerLen === 0 ? 0 : centerDx / centerLen;
             const tangentLen = Math.max(26, centerLen * 0.22);
+            const c1CenterX = rawStartX + (centerLen === 0 ? 0 : (centerDx / centerLen) * tangentLen) + normalX * curveOffset;
+            const c1CenterY = rawStartY + (centerLen === 0 ? 0 : (centerDy / centerLen) * tangentLen) + normalY * curveOffset;
             const c2CenterX = rawEndX - (centerLen === 0 ? 0 : (centerDx / centerLen) * tangentLen) + normalX * curveOffset;
             const c2CenterY = rawEndY - (centerLen === 0 ? 0 : (centerDy / centerLen) * tangentLen) + normalY * curveOffset;
 
+            const startPoint = getEdgePoint(
+              { x: c1CenterX, y: c1CenterY },
+              { x: rawStartX, y: rawStartY },
+              fromNode.id,
+            );
             const endPoint = toNode
               ? getEdgePoint(
                   { x: c2CenterX, y: c2CenterY },
@@ -3595,32 +3698,98 @@ export default function App() {
               : { x: rawEndX, y: rawEndY };
 
             const isFocused = focused?.type === 'connection' && focused.id === conn.id;
+            const isSelected = selectedConnectionIdSet.has(conn.id);
+            const isDraggingCurveControl = draggingCurveControl?.connId === conn.id;
+            const showStartHandle =
+              draggingEndpoint?.connId === conn.id
+              || (hoveredEndpoint?.connId === conn.id && hoveredEndpoint.endpoint === 'start');
             const showEndHandle =
               draggingEndpoint?.connId === conn.id
               || (hoveredEndpoint?.connId === conn.id && hoveredEndpoint.endpoint === 'end');
+            const showCurveControlHandle = centerLen > 0 && (isSelected || isDraggingCurveControl) && !draggingEndpoint && !isEditing;
+            const curveControlX = (rawStartX + rawEndX) / 2 + normalX * curveOffset * 0.75;
+            const curveControlY = (rawStartY + rawEndY) / 2 + normalY * curveOffset * 0.75;
 
-            if (!showEndHandle) return null;
+            if (!showStartHandle && !showEndHandle && !showCurveControlHandle) return null;
 
             return (
-              <g key={`end-handle-${conn.id}`} className="pointer-events-auto">
-                <circle
-                  cx={endPoint.x}
-                  cy={endPoint.y}
-                  r={16}
-                  fill="transparent"
-                  onMouseDown={(e) => handleConnectionEndpointMouseDown(e, conn.id, 'end')}
-                  className="cursor-grab"
-                />
-                <circle
-                  cx={endPoint.x}
-                  cy={endPoint.y}
-                  r={8}
-                  fill={isFocused ? themeColors.connectionFocused : themeColors.connectionBase}
-                  stroke={themeColors.handleStroke}
-                  strokeWidth={1.5}
-                  onMouseDown={(e) => handleConnectionEndpointMouseDown(e, conn.id, 'end')}
-                  className="cursor-grab"
-                />
+              <g key={`overlay-handles-${conn.id}`} className="pointer-events-auto">
+                {showStartHandle && (
+                  <>
+                    <circle
+                      cx={startPoint.x}
+                      cy={startPoint.y}
+                      r={16}
+                      fill="transparent"
+                      onMouseDown={(e) => handleConnectionEndpointMouseDown(e, conn.id, 'start')}
+                      className="cursor-grab"
+                    />
+                    <circle
+                      cx={startPoint.x}
+                      cy={startPoint.y}
+                      r={8}
+                      fill={isFocused ? themeColors.connectionFocused : themeColors.connectionBase}
+                      stroke={themeColors.handleStroke}
+                      strokeWidth={1.5}
+                      onMouseDown={(e) => handleConnectionEndpointMouseDown(e, conn.id, 'start')}
+                      className="cursor-grab"
+                    />
+                  </>
+                )}
+                {showEndHandle && (
+                  <>
+                    <circle
+                      cx={endPoint.x}
+                      cy={endPoint.y}
+                      r={16}
+                      fill="transparent"
+                      onMouseDown={(e) => handleConnectionEndpointMouseDown(e, conn.id, 'end')}
+                      className="cursor-grab"
+                    />
+                    <circle
+                      cx={endPoint.x}
+                      cy={endPoint.y}
+                      r={8}
+                      fill={isFocused ? themeColors.connectionFocused : themeColors.connectionBase}
+                      stroke={themeColors.handleStroke}
+                      strokeWidth={1.5}
+                      onMouseDown={(e) => handleConnectionEndpointMouseDown(e, conn.id, 'end')}
+                      className="cursor-grab"
+                    />
+                  </>
+                )}
+                {showCurveControlHandle && (
+                  <>
+                    <line
+                      x1={(rawStartX + rawEndX) / 2}
+                      y1={(rawStartY + rawEndY) / 2}
+                      x2={curveControlX}
+                      y2={curveControlY}
+                      stroke={themeColors.handleStroke}
+                      strokeWidth={1}
+                      strokeDasharray="3 3"
+                      pointerEvents="none"
+                    />
+                    <circle
+                      cx={curveControlX}
+                      cy={curveControlY}
+                      r={16}
+                      fill="transparent"
+                      onMouseDown={(e) => handleConnectionCurveControlMouseDown(e, conn.id)}
+                      className="cursor-grab"
+                    />
+                    <circle
+                      cx={curveControlX}
+                      cy={curveControlY}
+                      r={7}
+                      fill={isFocused ? themeColors.connectionFocused : themeColors.connectionSelected}
+                      stroke={themeColors.handleStroke}
+                      strokeWidth={1.5}
+                      onMouseDown={(e) => handleConnectionCurveControlMouseDown(e, conn.id)}
+                      className="cursor-grab"
+                    />
+                  </>
+                )}
               </g>
             );
           })}
