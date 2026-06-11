@@ -352,6 +352,14 @@ export default function App() {
   const [selectionBox, setSelectionBox] = useState<{ start: { x: number; y: number }; current: { x: number; y: number } } | null>(null);
   const [shortcuts, setShortcuts] = useState<KeyboardShortcuts>(DEFAULT_SHORTCUTS);
   const [isShortcutsModalOpen, setIsShortcutsModalOpen] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout>>();
+
+  const showToast = useCallback((message: string, type: 'success' | 'error' = 'success') => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast({ message, type });
+    toastTimerRef.current = setTimeout(() => setToast(null), 2000);
+  }, []);
   const previousGraphSizeRef = useRef({ nodes: 0, connections: 0 });
 
 
@@ -715,15 +723,15 @@ export default function App() {
       const writable = await targetHandle.createWritable();
       await writable.write(JSON.stringify(exportData, null, 2));
       await writable.close();
-      alert(t.saveSuccess);
+      showToast(t.saveSuccess);
       return true;
     } catch (err: any) {
       if (err?.name === 'AbortError') return false;
       const detail = err?.message ? `\n${err.message}` : '';
-      alert(`${t.saveFailed}${detail}`);
+      showToast(`${t.saveFailed}${detail}`, 'error');
       return false;
     }
-  }, [loadedFileHandle, loadedFileMeta, exportData, t, handleExport]);
+  }, [loadedFileHandle, loadedFileMeta, exportData, t, handleExport, showToast]);
 
   const handleNewCanvas = useCallback(async () => {
     const saved = await handleSaveToLoadedFile();
@@ -773,10 +781,10 @@ export default function App() {
     } catch (err: any) {
       if (err?.name !== 'AbortError') {
         console.error('Import from picker error:', err);
-        alert(`${t.importError}${err?.message ? ': ' + err.message : ''}`);
+        showToast(`${t.importError}${err?.message ? ': ' + err.message : ''}`, 'error');
       }
     }
-  }, [applyImportedData, getBestEffortFilePath, t]);
+  }, [applyImportedData, getBestEffortFilePath, t, showToast]);
 
 
   // Load from JSON
@@ -801,16 +809,16 @@ export default function App() {
         });
       } catch (err: any) {
         console.error('Import error:', err);
-        alert(`${t.importError}${err?.message ? ': ' + err.message : ''}`);
+        showToast(`${t.importError}${err?.message ? ': ' + err.message : ''}`, 'error');
       }
     };
     reader.onerror = () => {
-      alert(t.importError + ': Failed to read file');
+      showToast(t.importError + ': Failed to read file', 'error');
     };
     reader.readAsText(file);
     // Reset so same file can be reloaded
     e.target.value = '';
-  }, [t, applyImportedData, getBestEffortFilePath]);
+  }, [t, applyImportedData, getBestEffortFilePath, showToast]);
 
 
 
@@ -2116,16 +2124,18 @@ export default function App() {
   }, [isPanning, draggingNodeIds, draggingEndpoint, draggingCurveControl, nodes]);
 
 
-  // Auto-focus input
+  // Auto-focus input — focus textarea whenever an element is focused (not just editing)
+  // This is critical for Chinese IME: the textarea must be focused BEFORE the user starts
+  // typing, so the first keystroke can begin IME composition instead of being lost.
   useEffect(() => {
-    if (isEditing && inputRef.current) {
+    if (inputRef.current) {
       inputRef.current.focus();
       if (shouldSelect) {
         inputRef.current.select();
         setShouldSelect(false);
       }
     }
-  }, [isEditing, shouldSelect]);
+  }, [isEditing, shouldSelect, focused]);
 
   // Helper to calculate intersection with node boundary
   const getEdgePoint = (from: { x: number; y: number }, to: { x: number; y: number }, nodeId?: string) => {
@@ -3379,6 +3389,18 @@ export default function App() {
           {getConnection(focused.id)?.style === 'both' && <ArrowLeftRight size={18} className="text-blue-500" />}
           {getConnection(focused.id)?.style === 'none' && <Minus size={18} className="text-blue-500" />}
           <span className="text-xs text-slate-400">{t.tabToCycle}</span>
+        </div>
+      )}
+
+      {/* Toast Notification */}
+      {toast && (
+        <div
+          className={`fixed top-6 left-1/2 -translate-x-1/2 z-[9999] px-4 py-2 rounded-xl shadow-lg text-sm font-medium backdrop-blur-sm border transition-all duration-300
+            ${toast.type === 'success'
+              ? 'bg-emerald-50/90 text-emerald-700 border-emerald-200'
+              : 'bg-red-50/90 text-red-700 border-red-200'}`}
+        >
+          {toast.message}
         </div>
       )}
 
