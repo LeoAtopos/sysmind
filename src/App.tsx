@@ -100,20 +100,21 @@ const resetPerfDebugCounters = (state: PerfDebugState) => {
 };
 
 // #region debug-point A:perf-report
-const reportPerfDebug = (hypothesisId: 'A' | 'B' | 'C' | 'D' | 'E', location: string, msg: string, data: Record<string, unknown>) => {
-  fetch('http://127.0.0.1:7777/event', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      sessionId: 'large-graph-lag',
-      runId: PERF_DEBUG_RUN_ID,
-      hypothesisId,
-      location,
-      msg: `[DEBUG] ${msg}`,
-      data,
-      ts: Date.now(),
-    }),
-  }).catch(() => {});
+// Debug perf reporting — currently disabled (no-op). Enable when running local debug server.
+const reportPerfDebug = (_hypothesisId: 'A' | 'B' | 'C' | 'D' | 'E', _location: string, _msg: string, _data: Record<string, unknown>) => {
+  // fetch('http://127.0.0.1:7777/event', {
+  //   method: 'POST',
+  //   headers: { 'Content-Type': 'application/json' },
+  //   body: JSON.stringify({
+  //     sessionId: 'large-graph-lag',
+  //     runId: PERF_DEBUG_RUN_ID,
+  //     hypothesisId: _hypothesisId,
+  //     location: _location,
+  //     msg: `[DEBUG] ${_msg}`,
+  //     data: _data,
+  //     ts: Date.now(),
+  //   }),
+  // }).catch(() => {});
 };
 // #endregion
 
@@ -472,6 +473,8 @@ export default function App() {
       { label: formatShortcutLabel(shortcuts.undo, ctrlKey), desc: t.undo },
       { label: formatShortcutLabel(shortcuts.redo, ctrlKey), desc: t.redo },
       { label: formatShortcutLabel(shortcuts.save, ctrlKey), desc: t.save },
+      { label: formatShortcutLabel(shortcuts.copy, ctrlKey), desc: t.actionCopy },
+      { label: formatShortcutLabel(shortcuts.paste, ctrlKey), desc: t.actionPaste },
     ],
   }), [ctrlKey, shortcuts, t]);
   const currentShortcutHints = useMemo(() => {
@@ -547,6 +550,7 @@ export default function App() {
   const skipAutoFocusOnceRef = useRef(false);
   const prevFocusedRef = useRef<FocusedElement | null>(null);
   const skipFocusHistorySyncOnceRef = useRef(false);
+  const clipboardRef = useRef<{ nodes: Node[]; connections: Connection[] } | null>(null);
 
   // Native wheel event handler ref to allow adding/removing non-passive listener
   const wheelHandlerRef = useRef<((e: WheelEvent) => void) | null>(null);
@@ -1001,6 +1005,69 @@ export default function App() {
         return;
       }
 
+      // Copy
+      if (matchesShortcut(e, shortcuts.copy)) {
+        e.preventDefault();
+        const copyNodeIds = new Set<string>();
+
+        if (selectedNodeIds.length > 0) {
+          selectedNodeIds.forEach(id => copyNodeIds.add(id));
+        } else if (focused?.type === 'node') {
+          copyNodeIds.add(focused.id);
+        }
+
+        if (copyNodeIds.size === 0) return;
+
+        const copiedNodes = nodes.filter(n => copyNodeIds.has(n.id));
+        const copiedConnections = connections.filter(
+          c => copyNodeIds.has(c.fromId) && c.toId && copyNodeIds.has(c.toId)
+        );
+
+        clipboardRef.current = { nodes: copiedNodes, connections: copiedConnections };
+        showToast(`${t.copySuccess} (${copiedNodes.length})`);
+        return;
+      }
+
+      // Paste
+      if (matchesShortcut(e, shortcuts.paste)) {
+        e.preventDefault();
+        const clip = clipboardRef.current;
+        if (!clip || clip.nodes.length === 0) return;
+
+        const PASTE_OFFSET = 40;
+        const idMap = new Map<string, string>();
+
+        const newNodes: Node[] = clip.nodes.map(n => {
+          const newId = createGraphId();
+          idMap.set(n.id, newId);
+          return { ...n, id: newId, x: n.x + PASTE_OFFSET, y: n.y + PASTE_OFFSET };
+        });
+
+        const newConnections: Connection[] = clip.connections.map(c => ({
+          ...c,
+          id: createGraphId(),
+          fromId: idMap.get(c.fromId) ?? c.fromId,
+          toId: c.toId ? (idMap.get(c.toId) ?? c.toId) : c.toId,
+        }));
+
+        const nextNodes = [...nodes, ...newNodes];
+        const nextConns = [...connections, ...newConnections];
+        const newNodeIds = newNodes.map(n => n.id);
+
+        setNodes(nextNodes);
+        setConnections(nextConns);
+        setSelectedNodeIds(newNodeIds);
+        setSelectedConnectionIds([]);
+        if (newNodes.length === 1) {
+          setFocused({ type: 'node', id: newNodes[0].id });
+        } else {
+          setFocused(null);
+        }
+        pushHistory(nextNodes, nextConns, newNodes.length === 1 ? { type: 'node', id: newNodes[0].id } : null);
+        showToast(`${t.pasteSuccess} (${newNodes.length})`);
+        return;
+      }
+
       // Zoom shortcuts
       if (matchesShortcut(e, shortcuts.zoomIn) || matchesShortcut(e, shortcuts.zoomOut) || matchesShortcut(e, shortcuts.zoomReset)) {
         e.preventDefault();
@@ -1425,7 +1492,7 @@ export default function App() {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [focused, isEditing, nodes, connections, canvasOffset, searchQuery, searchResults, selectedIndex, lastStyle, defaultOffset, selectedNodeIds, selectedConnectionIds, shortcuts, matchesShortcut, handleSaveToLoadedFile]);
+  }, [focused, isEditing, nodes, connections, canvasOffset, searchQuery, searchResults, selectedIndex, lastStyle, defaultOffset, selectedNodeIds, selectedConnectionIds, shortcuts, matchesShortcut, handleSaveToLoadedFile, showToast, t, pushHistory]);
 
   // Spatial Navigation
   const moveFocus = (key: string) => {

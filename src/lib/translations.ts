@@ -89,6 +89,11 @@ export const TRANSLATIONS = {
     actionCycleStyle: '切换样式',
     actionSearch: '搜索链接',
     actionOpenShortcuts: '打开快捷键设置',
+    actionCopy: '复制',
+    actionPaste: '粘贴',
+    copySuccess: '已复制',
+    pasteSuccess: '已粘贴',
+    nothingToCopy: '没有可复制的内容',
   },
   en: {
     connLength: 'Conn Length',
@@ -179,6 +184,11 @@ export const TRANSLATIONS = {
     actionCycleStyle: 'Cycle Style',
     actionSearch: 'Search Link',
     actionOpenShortcuts: 'Open Shortcuts Settings',
+    actionCopy: 'Copy',
+    actionPaste: 'Paste',
+    copySuccess: 'Copied',
+    pasteSuccess: 'Pasted',
+    nothingToCopy: 'Nothing to copy',
   },
 } as const;
 

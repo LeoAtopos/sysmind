@@ -45,6 +45,8 @@ export interface KeyboardShortcuts {
   undo: ShortcutConfig;
   redo: ShortcutConfig;
   save: ShortcutConfig;
+  copy: ShortcutConfig;
+  paste: ShortcutConfig;
   zoomIn: ShortcutConfig;
   zoomOut: ShortcutConfig;
   zoomReset: ShortcutConfig;
@@ -67,6 +69,8 @@ export const DEFAULT_SHORTCUTS: KeyboardShortcuts = {
   undo: { key: 'z', ctrl: true },
   redo: { key: 'y', ctrl: true },
   save: { key: 's', ctrl: true },
+  copy: { key: 'c', ctrl: true },
+  paste: { key: 'v', ctrl: true },
   zoomIn: { key: '=', ctrl: true },
   zoomOut: { key: '-', ctrl: true },
   zoomReset: { key: '0', ctrl: true },

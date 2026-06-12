@@ -82,6 +82,8 @@ export function ShortcutsModal({
       { key: 'undo', label: t.actionUndo },
       { key: 'redo', label: t.actionRedo },
       { key: 'save', label: t.actionSave },
+      { key: 'copy', label: t.actionCopy },
+      { key: 'paste', label: t.actionPaste },
       { key: 'zoomIn', label: t.actionZoomIn },
       { key: 'zoomOut', label: t.actionZoomOut },
       { key: 'zoomReset', label: t.actionZoomReset },
