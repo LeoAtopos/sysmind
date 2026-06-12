@@ -1700,23 +1700,14 @@ export default function App() {
 
     setDraggingCurveControl(null);
 
-    const isSelected = selectedNodeIds.includes(nodeId);
-
-    const totalSelected = selectedNodeIds.length + selectedConnectionIds.length;
-
-    if (!isSelected || totalSelected <= 1) {
-      setSelectedNodeIds([nodeId]);
-      setSelectedConnectionIds([]);
-      setDraggingNodeIds([nodeId]);
-      setDraggingPendingConnectionIds([]);
-      clearBeforePreviousOnNextFocusRef.current = true;
-      updateFocus({ type: 'node', id: nodeId });
-      return;
-    }
-
-    const movableNodeIds = getSelectedNodeIdsByCurrentSelection(selectedNodeIds, selectedConnectionIds);
-    setDraggingNodeIds(movableNodeIds);
-    setDraggingPendingConnectionIds(getPendingConnectionIdsBySelection(selectedConnectionIds));
+    // Always narrow selection to the clicked node, so clicking a selected node
+    // within a multi-select exits multi-select mode instead of keeping it stuck.
+    setSelectedNodeIds([nodeId]);
+    setSelectedConnectionIds([]);
+    setDraggingNodeIds([nodeId]);
+    setDraggingPendingConnectionIds([]);
+    clearBeforePreviousOnNextFocusRef.current = true;
+    updateFocus({ type: 'node', id: nodeId });
   };
 
   const handleConnectionMouseDown = (e: React.MouseEvent, connId: string) => {
@@ -1731,21 +1722,13 @@ export default function App() {
 
     skipNextConnectionCenterRef.current = true;
 
-    const isSelected = selectedConnectionIds.includes(connId);
-    const totalSelected = selectedNodeIds.length + selectedConnectionIds.length;
-
-    if (!isSelected || totalSelected <= 1) {
-      setSelectedNodeIds([]);
-      setSelectedConnectionIds([connId]);
-      setDraggingNodeIds(getSelectedNodeIdsByCurrentSelection([], [connId]));
-      setDraggingPendingConnectionIds(getPendingConnectionIdsBySelection([connId]));
-      clearBeforePreviousOnNextFocusRef.current = true;
-      updateFocus({ type: 'connection', id: connId });
-      return;
-    }
-
-    setDraggingNodeIds(getSelectedNodeIdsByCurrentSelection(selectedNodeIds, selectedConnectionIds));
-    setDraggingPendingConnectionIds(getPendingConnectionIdsBySelection(selectedConnectionIds));
+    // Always narrow selection to the clicked connection.
+    setSelectedNodeIds([]);
+    setSelectedConnectionIds([connId]);
+    setDraggingNodeIds(getSelectedNodeIdsByCurrentSelection([], [connId]));
+    setDraggingPendingConnectionIds(getPendingConnectionIdsBySelection([connId]));
+    clearBeforePreviousOnNextFocusRef.current = true;
+    updateFocus({ type: 'connection', id: connId });
   };
 
   const handleConnectionEndpointMouseDown = (e: React.MouseEvent, connId: string, endpoint: 'start' | 'end') => {
