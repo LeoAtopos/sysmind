@@ -551,6 +551,7 @@ export default function App() {
   const prevFocusedRef = useRef<FocusedElement | null>(null);
   const skipFocusHistorySyncOnceRef = useRef(false);
   const clipboardRef = useRef<{ nodes: Node[]; connections: Connection[] } | null>(null);
+  const narrowSelectOnMouseUpRef = useRef<string | null>(null);
 
   // Native wheel event handler ref to allow adding/removing non-passive listener
   const wheelHandlerRef = useRef<((e: WheelEvent) => void) | null>(null);
@@ -1700,12 +1701,26 @@ export default function App() {
 
     setDraggingCurveControl(null);
 
-    // Always narrow selection to the clicked node, so clicking a selected node
-    // within a multi-select exits multi-select mode instead of keeping it stuck.
+    const isSelected = selectedNodeIds.includes(nodeId);
+    const totalSelected = selectedNodeIds.length + selectedConnectionIds.length;
+
+    if (isSelected && totalSelected > 1) {
+      // Clicked a node that's part of a multi-selection: drag all selected
+      // nodes together. If the user releases without dragging, narrow selection.
+      narrowSelectOnMouseUpRef.current = nodeId;
+      const movableNodeIds = getSelectedNodeIdsByCurrentSelection(selectedNodeIds, selectedConnectionIds);
+      setDraggingNodeIds(movableNodeIds);
+      setDraggingPendingConnectionIds(getPendingConnectionIdsBySelection(selectedConnectionIds));
+      clearBeforePreviousOnNextFocusRef.current = true;
+      updateFocus({ type: 'node', id: nodeId });
+      return;
+    }
+
     setSelectedNodeIds([nodeId]);
     setSelectedConnectionIds([]);
     setDraggingNodeIds([nodeId]);
     setDraggingPendingConnectionIds([]);
+    narrowSelectOnMouseUpRef.current = null;
     clearBeforePreviousOnNextFocusRef.current = true;
     updateFocus({ type: 'node', id: nodeId });
   };
@@ -1924,6 +1939,8 @@ export default function App() {
     }
 
     if (draggingNodeIds && draggingNodeIds.length > 0) {
+      // User is actually dragging — cancel the "narrow on mouseUp" plan
+      narrowSelectOnMouseUpRef.current = null;
       const movementScale = canvasScale === 0 ? 1 : canvasScale;
       const dx = e.movementX / movementScale;
       const dy = e.movementY / movementScale;
@@ -2004,6 +2021,13 @@ export default function App() {
 
     if (draggingNodeIds && draggingNodeIds.length > 0) {
       pushHistory(nodes, connections, focused);
+
+      // If the user clicked (no drag) on a node within a multi-select, narrow selection
+      if (narrowSelectOnMouseUpRef.current) {
+        setSelectedNodeIds([narrowSelectOnMouseUpRef.current]);
+        setSelectedConnectionIds([]);
+      }
+      narrowSelectOnMouseUpRef.current = null;
     }
 
     if (selectionBox) {
