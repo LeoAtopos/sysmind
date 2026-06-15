@@ -118,11 +118,16 @@ const reportPerfDebug = (_hypothesisId: 'A' | 'B' | 'C' | 'D' | 'E', _location: 
 };
 // #endregion
 
-const textMeasureCanvas = typeof document !== 'undefined' ? document.createElement('canvas') : null;
-const textMeasureContext = textMeasureCanvas?.getContext('2d') ?? null;
 const textMeasureCache = new Map<string, number>();
 const adaptiveTextBoxCache = new Map<string, { width: number; height: number; lines: string[] }>();
 const PERF_DEBUG_RUN_ID = 'post-fix';
+
+const textMeasureSpan = typeof document !== 'undefined' ? (() => {
+  const el = document.createElement('span');
+  el.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;pointer-events:none;top:-9999px;left:-9999px;';
+  document.body.appendChild(el);
+  return el;
+})() : null;
 
 const measureText = (text: string, font: string) => {
   const perfStart = performance.now();
@@ -137,9 +142,14 @@ const measureText = (text: string, font: string) => {
     return cachedWidth;
   }
 
-  const width = textMeasureContext
-    ? (textMeasureContext.font = font, textMeasureContext.measureText(text).width)
-    : text.length * 8;
+  let width: number;
+  if (textMeasureSpan) {
+    textMeasureSpan.style.font = font;
+    textMeasureSpan.textContent = text;
+    width = textMeasureSpan.getBoundingClientRect().width;
+  } else {
+    width = text.length * 8;
+  }
   textMeasureCache.set(cacheKey, width);
   const perfState = getPerfDebugState();
   if (perfState) {
@@ -149,47 +159,59 @@ const measureText = (text: string, font: string) => {
   return width;
 };
 
-const wrapTextLines = (text: string, maxTextWidth: number, font: string) => {
-  if (!text) return [''];
-  const words = text.split(/\s+/);
-  const lines: string[] = [];
-  let current = '';
-
-  const pushChunk = (chunk: string) => {
-    if (!chunk) return;
-    if (measureText(chunk, font) <= maxTextWidth) {
-      lines.push(chunk);
-      return;
+const isMostlyChineseText = (text: string) => {
+  if (!text) return false;
+  let chineseCount = 0;
+  let totalCount = 0;
+  for (const ch of text) {
+    if (/[\u4E00-\u9FFF\u3400-\u4DBF\uF900-\uFAFF]/.test(ch)) {
+      chineseCount += 1;
     }
-    let piece = '';
-    for (const ch of chunk) {
-      const test = piece + ch;
-      if (measureText(test, font) <= maxTextWidth || piece.length === 0) {
-        piece = test;
-      } else {
-        lines.push(piece);
-        piece = ch;
-      }
-    }
-    if (piece) lines.push(piece);
-  };
-
-  for (const word of words) {
-    if (!word) continue;
-    const next = current ? `${current} ${word}` : word;
-    if (measureText(next, font) <= maxTextWidth) {
-      current = next;
-    } else {
-      pushChunk(current);
-      current = '';
-      if (measureText(word, font) <= maxTextWidth) {
-        current = word;
-      } else {
-        pushChunk(word);
-      }
+    if (ch.trim() !== '') {
+      totalCount += 1;
     }
   }
-  pushChunk(current);
+  return totalCount > 0 && chineseCount / totalCount >= 0.6;
+};
+
+const balancedChineseLines = (text: string, maxCharsPerLine: number) => {
+  const chars = Array.from(text);
+  if (chars.length <= maxCharsPerLine) return [text];
+  const lineCount = Math.ceil(chars.length / maxCharsPerLine);
+  const baseSize = Math.floor(chars.length / lineCount);
+  const remainder = chars.length % lineCount;
+  const lines: string[] = [];
+  let idx = 0;
+  for (let i = 0; i < lineCount; i += 1) {
+    const count = baseSize + (i < remainder ? 1 : 0);
+    lines.push(chars.slice(idx, idx + count).join(''));
+    idx += count;
+  }
+  return lines;
+};
+
+const wrapTextLines = (text: string, maxTextWidth: number, font: string) => {
+  if (!text) return [''];
+  if (isMostlyChineseText(text)) {
+    const lines = balancedChineseLines(text, 7);
+    const widest = Math.max(...lines.map(line => measureText(line, font)), 0);
+    if (widest <= maxTextWidth) {
+      return lines;
+    }
+  }
+
+  const lines: string[] = [];
+  let piece = '';
+  for (const ch of text) {
+    const test = piece + ch;
+    if (measureText(test, font) <= maxTextWidth) {
+      piece = test;
+    } else {
+      if (piece) lines.push(piece);
+      piece = ch;
+    }
+  }
+  if (piece) lines.push(piece);
   return lines.length > 0 ? lines : [''];
 };
 
@@ -228,12 +250,22 @@ const getAdaptiveTextBoxSize = (
     return cachedResult;
   }
   const maxTextWidth = Math.max(1, config.maxWidth - config.hPadding);
-  const lines = wrapTextLines(content, maxTextWidth, config.font);
-  const widest = Math.max(...lines.map(line => measureText(line, config.font)), 0);
-  const width = Math.max(config.minWidth, Math.min(config.maxWidth, Math.ceil(widest + config.hPadding)));
-  const rawHeight = Math.ceil(lines.length * config.lineHeight + config.vPadding);
+  let finalLines = wrapTextLines(content, maxTextWidth, config.font);
+  const widest = Math.max(...finalLines.map(line => measureText(line, config.font)), 0);
+  let width = Math.max(config.minWidth, Math.min(config.maxWidth, Math.ceil(widest + config.hPadding + 1)));
+  for (let iter = 0; iter < 5; iter++) {
+    const contentWidth = width - config.hPadding;
+    if (contentWidth >= maxTextWidth) break;
+    const actualLines = wrapTextLines(content, contentWidth, config.font);
+    if (actualLines.length <= finalLines.length) break;
+    finalLines = actualLines;
+    const w2 = Math.max(...actualLines.map(l => measureText(l, config.font)), 0);
+    width = Math.max(config.minWidth, Math.min(config.maxWidth, Math.ceil(w2 + config.hPadding + 1)));
+    if (width >= config.maxWidth) break;
+  }
+  const rawHeight = Math.ceil(finalLines.length * config.lineHeight + config.vPadding);
   const height = Math.max(config.minHeight ?? 0, rawHeight);
-  const result = { width, height, lines };
+  const result = { width, height, lines: finalLines };
   adaptiveTextBoxCache.set(cacheKey, result);
   const perfState = getPerfDebugState();
   if (perfState) {
@@ -3046,7 +3078,7 @@ export default function App() {
           const nodeStyle = node.style || 'default';
 
           const nodeLines = nodeBox.lines;
-          const textAlignClass = nodeLines.length > 1 ? 'text-left' : 'text-center';
+          const textAlignClass = 'text-center';
           return (
             <motion.div
               key={node.id}
@@ -3091,8 +3123,14 @@ export default function App() {
                 />
               )}
               {!(isFocused && isEditing) && (
-                <span className={`text-sm font-medium whitespace-pre-wrap break-words px-2 relative z-0 w-full ${textAlignClass} ${getNodeTextClasses(nodeStyle, isDarkTheme)}`}>
-                  {node.text || <span className="app-node-placeholder italic">{t.newNode}</span>}
+                <span className={`text-sm font-medium px-2 relative z-0 w-full ${textAlignClass} ${getNodeTextClasses(nodeStyle, isDarkTheme)}`}>
+                  {nodeBox.lines.length > 0 && node.text ? (
+                    nodeBox.lines.map((line, i) => (
+                      <span key={i} className="block">{line || '\u00A0'}</span>
+                    ))
+                  ) : (
+                    <span className="app-node-placeholder italic">{t.newNode}</span>
+                  )}
                 </span>
               )}
             </motion.div>
