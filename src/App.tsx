@@ -990,6 +990,14 @@ export default function App() {
     return newConn;
   };
 
+  // Port-to-port new connection drag state
+  const [draggingNewConnection, setDraggingNewConnection] = useState<{
+    fromNodeId: string;
+    connId: string;
+    port: 'left' | 'right';
+  } | null>(null);
+  const [hoveredNewConnTarget, setHoveredNewConnTarget] = useState<string | null>(null);
+
   // Keyboard Handlers
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -1065,39 +1073,71 @@ export default function App() {
       if (matchesShortcut(e, shortcuts.paste)) {
         e.preventDefault();
         const clip = clipboardRef.current;
-        if (!clip || clip.nodes.length === 0) return;
 
-        const PASTE_OFFSET = 40;
-        const idMap = new Map<string, string>();
+        if (clip && clip.nodes.length > 0) {
+          // Internal clipboard — duplicate copied nodes/connections
+          const PASTE_OFFSET = 40;
+          const idMap = new Map<string, string>();
 
-        const newNodes: Node[] = clip.nodes.map(n => {
-          const newId = createGraphId();
-          idMap.set(n.id, newId);
-          return { ...n, id: newId, x: n.x + PASTE_OFFSET, y: n.y + PASTE_OFFSET };
-        });
+          const newNodes: Node[] = clip.nodes.map(n => {
+            const newId = createGraphId();
+            idMap.set(n.id, newId);
+            return { ...n, id: newId, x: n.x + PASTE_OFFSET, y: n.y + PASTE_OFFSET };
+          });
 
-        const newConnections: Connection[] = clip.connections.map(c => ({
-          ...c,
-          id: createGraphId(),
-          fromId: idMap.get(c.fromId) ?? c.fromId,
-          toId: c.toId ? (idMap.get(c.toId) ?? c.toId) : c.toId,
-        }));
+          const newConnections: Connection[] = clip.connections.map(c => ({
+            ...c,
+            id: createGraphId(),
+            fromId: idMap.get(c.fromId) ?? c.fromId,
+            toId: c.toId ? (idMap.get(c.toId) ?? c.toId) : c.toId,
+          }));
 
-        const nextNodes = [...nodes, ...newNodes];
-        const nextConns = [...connections, ...newConnections];
-        const newNodeIds = newNodes.map(n => n.id);
+          const nextNodes = [...nodes, ...newNodes];
+          const nextConns = [...connections, ...newConnections];
+          const newNodeIds = newNodes.map(n => n.id);
 
-        setNodes(nextNodes);
-        setConnections(nextConns);
-        setSelectedNodeIds(newNodeIds);
-        setSelectedConnectionIds([]);
-        if (newNodes.length === 1) {
-          setFocused({ type: 'node', id: newNodes[0].id });
+          setNodes(nextNodes);
+          setConnections(nextConns);
+          setSelectedNodeIds(newNodeIds);
+          setSelectedConnectionIds([]);
+          if (newNodes.length === 1) {
+            setFocused({ type: 'node', id: newNodes[0].id });
+          } else {
+            setFocused(null);
+          }
+          pushHistory(nextNodes, nextConns, newNodes.length === 1 ? { type: 'node', id: newNodes[0].id } : null);
+          showToast(`${t.pasteSuccess} (${newNodes.length})`);
         } else {
-          setFocused(null);
+          // No internal clipboard — try reading text from system clipboard
+          navigator.clipboard.readText().then(text => {
+            if (!text || !text.trim()) return;
+            const lines = text.split(/\r?\n/).filter(l => l.trim());
+            if (lines.length === 0) return;
+
+            const scale = canvasScale || 1;
+            const centerX = (-canvasOffset.x + window.innerWidth / 2) / scale;
+            const centerY = (-canvasOffset.y + window.innerHeight / 2) / scale;
+            const spacingY = NODE_HEIGHT + 20;
+            const startY = centerY - ((lines.length - 1) / 2) * spacingY;
+
+            const newNodes: Node[] = lines.map((line, i) => ({
+              id: createGraphId(),
+              x: centerX,
+              y: startY + i * spacingY,
+              text: line.trim(),
+            }));
+
+            const nextNodes = [...nodes, ...newNodes];
+            const newNodeIds = newNodes.map(n => n.id);
+
+            setNodes(nextNodes);
+            setSelectedNodeIds(newNodeIds);
+            setSelectedConnectionIds([]);
+            setFocused(newNodes.length === 1 ? { type: 'node', id: newNodes[0].id } : null);
+            pushHistory(nextNodes, connections, newNodes.length === 1 ? { type: 'node', id: newNodes[0].id } : null);
+            showToast(`${t.pasteSuccess} (${newNodes.length})`);
+          }).catch(() => {});
         }
-        pushHistory(nextNodes, nextConns, newNodes.length === 1 ? { type: 'node', id: newNodes[0].id } : null);
-        showToast(`${t.pasteSuccess} (${newNodes.length})`);
         return;
       }
 
@@ -1525,7 +1565,7 @@ export default function App() {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [focused, isEditing, nodes, connections, canvasOffset, searchQuery, searchResults, selectedIndex, lastStyle, defaultOffset, selectedNodeIds, selectedConnectionIds, shortcuts, matchesShortcut, handleSaveToLoadedFile, showToast, t, pushHistory]);
+  }, [focused, isEditing, nodes, connections, canvasOffset, canvasScale, searchQuery, searchResults, selectedIndex, lastStyle, defaultOffset, selectedNodeIds, selectedConnectionIds, shortcuts, matchesShortcut, handleSaveToLoadedFile, showToast, t, pushHistory, draggingNewConnection, getNode, createConnection, getBestCurveBend, lastDirection]);
 
   // Spatial Navigation
   const moveFocus = (key: string) => {
@@ -1851,6 +1891,28 @@ export default function App() {
     setDraggingCurveControl({ connId });
   };
 
+  const handlePortMouseDown = (e: React.MouseEvent, nodeId: string, port: 'left' | 'right') => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+
+    const node = getNode(nodeId);
+    if (!node) return;
+
+    const nodeBox = getNodeBoxSize(node.text);
+    const portWorldX = port === 'left'
+      ? node.x - nodeBox.width / 2
+      : node.x + nodeBox.width / 2;
+
+    const newConn = createConnection(
+      nodeId,
+      null,
+      { x: portWorldX, y: node.y },
+    );
+
+    setDraggingNewConnection({ fromNodeId: nodeId, connId: newConn.id, port });
+  };
+
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
 
     if (e.button === 2) {
@@ -1963,6 +2025,18 @@ export default function App() {
       return;
     }
 
+    if (draggingNewConnection) {
+      const world = getWorldPointFromClient(e.clientX, e.clientY);
+      const targetNode = getNodeAtWorldPoint(world, draggingNewConnection.fromNodeId);
+      setHoveredNewConnTarget(targetNode ? targetNode.id : null);
+      setConnections(prev => prev.map(c =>
+        c.id === draggingNewConnection.connId
+          ? { ...c, tempToPos: world }
+          : c
+      ));
+      return;
+    }
+
 
     if (!isPanning && !selectionBox) {
       setHoveredEndpoint(getHoveredEndpointAtClientPoint(e.clientX, e.clientY));
@@ -2047,6 +2121,25 @@ export default function App() {
       setDraggingEndpoint(null);
       setHoveredEndpoint(null);
       setIsPanning(false);
+      return;
+    }
+
+    if (draggingNewConnection) {
+      const world = getWorldPointFromClient(e.clientX, e.clientY);
+      const targetNode = getNodeAtWorldPoint(world, draggingNewConnection.fromNodeId);
+
+      if (targetNode) {
+        const nextConns = connections.map(c => {
+          if (c.id !== draggingNewConnection.connId) return c;
+          const nextBend = getBestCurveBend(c.fromId, targetNode.id, c.id);
+          return { ...c, toId: targetNode.id, tempToPos: undefined, curveBend: nextBend, curveBendRatio: undefined };
+        });
+        setConnections(nextConns);
+        pushHistory(nodes, nextConns, focused);
+      }
+
+      setDraggingNewConnection(null);
+      setHoveredNewConnTarget(null);
       return;
     }
 
@@ -3095,7 +3188,7 @@ export default function App() {
               }}
               onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
               style={{ width: nodeBox.width, height: nodeBox.height }}
-              className={`absolute flex items-center justify-center rounded-xl border-2 transition-colors duration-200 cursor-grab active:cursor-grabbing z-10
+              className={`group absolute flex items-center justify-center rounded-xl border-2 transition-colors duration-200 cursor-grab active:cursor-grabbing z-10
                 ${getNodeStyleClasses(nodeStyle, isFocused, isSelected, isDarkTheme)}`}
 
             >
@@ -3132,6 +3225,22 @@ export default function App() {
                     <span className="app-node-placeholder italic">{t.newNode}</span>
                   )}
                 </span>
+              )}
+              {(isFocused || isSelected) && (
+                <>
+                  {/* Left port */}
+                  <div
+                    className="absolute left-0 top-1/2 w-3.5 h-3.5 translate-x-1 -translate-y-1/2 rounded-full cursor-crosshair z-20 transition-opacity opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto"
+                    style={{ backgroundColor: themeColors.connectionFocused }}
+                    onMouseDown={(e) => handlePortMouseDown(e, node.id, 'left')}
+                  />
+                  {/* Right port */}
+                  <div
+                    className="absolute right-0 top-1/2 w-3.5 h-3.5 -translate-x-1 -translate-y-1/2 rounded-full cursor-crosshair z-20 transition-opacity opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto"
+                    style={{ backgroundColor: themeColors.connectionFocused }}
+                    onMouseDown={(e) => handlePortMouseDown(e, node.id, 'right')}
+                  />
+                </>
               )}
             </motion.div>
           );
@@ -3273,7 +3382,7 @@ export default function App() {
             );
           })}
         </svg>
-
+      
       </motion.div>
 
 
