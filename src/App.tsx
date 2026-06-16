@@ -553,6 +553,8 @@ export default function App() {
           { label: formatShortcutLabel(shortcuts.cycleStyle, ctrlKey), desc: t.tab },
           { label: formatShortcutLabel(shortcuts.search, ctrlKey), desc: t.search },
           { label: `${ctrlKey}+Arrows`, desc: t.ctrlArrowsConnection },
+          { label: 'Shift+Arrows', desc: t.adjustCurve },
+          { label: 'Shift+Enter', desc: t.straightenLine },
           { label: formatShortcutLabel(shortcuts.delete, ctrlKey), desc: t.deleteConnection },
         ],
       };
@@ -1508,6 +1510,22 @@ export default function App() {
 
           // Just trigger editing mode, browser handles the character
           setIsEditing(true);
+        } else if (e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+          // Shift + Arrow keys: Adjust curve bend
+          e.preventDefault();
+          const step = 10;
+          const delta = (e.key === 'ArrowUp' || e.key === 'ArrowLeft') ? step : -step;
+          const currentBend = conn.curveBend ?? 0;
+          const nextBend = currentBend + delta;
+          const nextConns = connections.map(c => c.id === conn.id ? { ...c, curveBend: nextBend, curveBendRatio: undefined } : c);
+          setConnections(nextConns);
+          pushHistory(nodes, nextConns, focused);
+        } else if (e.shiftKey && e.key === 'Enter') {
+          // Shift + Enter: Reset curve bend to straight line
+          e.preventDefault();
+          const nextConns = connections.map(c => c.id === conn.id ? { ...c, curveBend: 0, curveBendRatio: undefined } : c);
+          setConnections(nextConns);
+          pushHistory(nodes, nextConns, focused);
         } else if ((e.ctrlKey || e.metaKey) && (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
           // Ctrl/Cmd + Arrow keys: Move connection endpoint
           e.preventDefault();
@@ -3226,7 +3244,7 @@ export default function App() {
                   )}
                 </span>
               )}
-              {(isFocused || isSelected) && (
+              {(isFocused || isSelected) && !(isFocused && isEditing) && (
                 <>
                   {/* Left port */}
                   <div
