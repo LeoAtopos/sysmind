@@ -24,6 +24,7 @@ export interface Connection {
 export type FocusedElement =
   | { type: 'node'; id: string }
   | { type: 'connection'; id: string }
+  | { type: 'multi-select' }
   | null;
 
 // Keyboard shortcuts configuration

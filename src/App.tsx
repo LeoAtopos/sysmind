@@ -560,6 +560,17 @@ export default function App() {
       };
     }
 
+    if (focused?.type === 'multi-select') {
+      return {
+        title: t.multiSelectActions,
+        items: [
+          { label: `${ctrlKey}+Arrows`, desc: t.ctrlArrowsMoveSelected },
+          { label: formatShortcutLabel(shortcuts.delete, ctrlKey), desc: t.deleteSelected },
+          { label: formatShortcutLabel(shortcuts.copy, ctrlKey), desc: t.actionCopy },
+        ],
+      };
+    }
+
     return {
       title: t.emptyFocusActions,
       items: [
@@ -591,7 +602,13 @@ export default function App() {
   const wheelHandlerRef = useRef<((e: WheelEvent) => void) | null>(null);
 
 
-  const isSameFocus = (a: FocusedElement, b: FocusedElement) => a?.type === b?.type && a?.id === b?.id;
+  const isSameFocus = (a: FocusedElement, b: FocusedElement) => {
+    if (a === null && b === null) return true;
+    if (a === null || b === null) return false;
+    if (a.type !== b.type) return false;
+    if (a.type === 'multi-select' || b.type === 'multi-select') return true;
+    return (a as { id: string }).id === (b as { id: string }).id;
+  };
 
   useEffect(() => {
     try {
@@ -1228,7 +1245,7 @@ export default function App() {
       const selectedTotal = selectedNodeIds.length + selectedConnectionIds.length;
       if (matchesShortcut(e, shortcuts.delete)) {
         e.preventDefault();
-        if (focused) {
+        if (focused && focused.type !== 'multi-select') {
           if (focused.type === 'node') {
             const node = getNode(focused.id);
             if (!node) return;
@@ -1352,7 +1369,11 @@ export default function App() {
       if (!focused) {
         if (matchesShortcut(e, shortcuts.createNode)) {
           e.preventDefault();
-          const newNode = createNode(-canvasOffset.x + window.innerWidth / 2, -canvasOffset.y + window.innerHeight / 2);
+          const scale = canvasScale || 1;
+          const newNode = createNode(
+            (window.innerWidth / 2 - canvasOffset.x) / scale,
+            (window.innerHeight / 2 - canvasOffset.y) / scale
+          );
           const nextFocused = { type: 'node', id: newNode.id };
           setFocused(nextFocused);
           setShouldSelect(true);
@@ -1364,8 +1385,9 @@ export default function App() {
           if (nodes.length === 0) return;
 
           // Calculate the center of the current viewport in world coordinates
-          const viewportCenterX = -canvasOffset.x + window.innerWidth / 2;
-          const viewportCenterY = -canvasOffset.y + window.innerHeight / 2;
+          const scale = canvasScale || 1;
+          const viewportCenterX = (window.innerWidth / 2 - canvasOffset.x) / scale;
+          const viewportCenterY = (window.innerHeight / 2 - canvasOffset.y) / scale;
 
           // Find the node closest to the viewport center
           let closestNode = nodes[0];
@@ -1382,6 +1404,55 @@ export default function App() {
           const nextFocused = { type: 'node', id: closestNode.id };
           setFocused(nextFocused);
           pushHistory(nodes, connections, nextFocused);
+        }
+        return;
+      }
+
+      // Multi-select Focused Actions
+      if (focused?.type === 'multi-select') {
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+          e.preventDefault();
+          const step = 20;
+          let dx = 0;
+          let dy = 0;
+          if (e.key === 'ArrowRight') dx = step;
+          if (e.key === 'ArrowLeft') dx = -step;
+          if (e.key === 'ArrowDown') dy = step;
+          if (e.key === 'ArrowUp') dy = -step;
+          const movableNodeIds = getSelectedNodeIdsByCurrentSelection(selectedNodeIds, selectedConnectionIds);
+          setNodes(prev => prev.map(n => movableNodeIds.includes(n.id) ? { ...n, x: n.x + dx, y: n.y + dy } : n));
+          return;
+        }
+        if (matchesShortcut(e, shortcuts.moveUp) || matchesShortcut(e, shortcuts.moveDown) || matchesShortcut(e, shortcuts.moveLeft) || matchesShortcut(e, shortcuts.moveRight)) {
+          e.preventDefault();
+          setSelectedNodeIds([]);
+          setSelectedConnectionIds([]);
+          if (nodes.length === 0) {
+            setFocused(null);
+            return;
+          }
+          const scale = canvasScale || 1;
+          const viewportCenterX = (window.innerWidth / 2 - canvasOffset.x) / scale;
+          const viewportCenterY = (window.innerHeight / 2 - canvasOffset.y) / scale;
+          let closestNode = nodes[0];
+          let minDistance = Infinity;
+          for (const node of nodes) {
+            const distance = Math.hypot(node.x - viewportCenterX, node.y - viewportCenterY);
+            if (distance < minDistance) {
+              minDistance = distance;
+              closestNode = node;
+            }
+          }
+          const nextFocused = { type: 'node' as const, id: closestNode.id };
+          setFocused(nextFocused);
+          pushHistory(nodes, connections, nextFocused);
+          return;
+        }
+        if (e.key === 'Escape') {
+          setSelectedNodeIds([]);
+          setSelectedConnectionIds([]);
+          setFocused(null);
+          return;
         }
         return;
       }
@@ -1774,6 +1845,8 @@ export default function App() {
     const total = nextNodeIds.length + nextConnectionIds.length;
     if (total === 1) {
       updateFocus({ type: 'node', id: nextNodeIds[0] });
+    } else if (total > 1) {
+      updateFocus({ type: 'multi-select' });
     } else {
       updateFocus(null);
     }
@@ -1802,7 +1875,10 @@ export default function App() {
       setDraggingNodeIds(movableNodeIds);
       setDraggingPendingConnectionIds(getPendingConnectionIdsBySelection(selectedConnectionIds));
       clearBeforePreviousOnNextFocusRef.current = true;
-      updateFocus({ type: 'node', id: nodeId });
+      // Keep multi-select focus — don't narrow to single node on drag start
+      if (focused?.type !== 'multi-select') {
+        updateFocus({ type: 'node', id: nodeId });
+      }
       return;
     }
 
@@ -2200,8 +2276,10 @@ export default function App() {
   useEffect(() => {
     if (skipAutoFocusOnceRef.current) {
       skipAutoFocusOnceRef.current = false;
+      prevFocusedRef.current = focused;
+      return;
     } else if (isEditing && focused && inputRef.current) {
-      inputRef.current.focus();
+      inputRef.current.focus({ preventScroll: true });
     }
 
     const focusedChanged = focused?.type !== prevFocusedRef.current?.type || focused?.id !== prevFocusedRef.current?.id;
@@ -2217,12 +2295,14 @@ export default function App() {
 
     let targetX = 0;
     let targetY = 0;
+    let hasTarget = false;
 
     if (focused.type === 'node') {
       const node = getNode(focused.id);
       if (node) {
         targetX = node.x;
         targetY = node.y;
+        hasTarget = true;
       }
     } else {
       const conn = getConnection(focused.id);
@@ -2233,11 +2313,12 @@ export default function App() {
         if (from) {
           targetX = (from.x + toPos.x) / 2;
           targetY = (from.y + toPos.y) / 2;
+          hasTarget = true;
         }
       }
     }
 
-    if (targetX !== 0 || targetY !== 0) {
+    if (hasTarget) {
       setCanvasView(prev => {
         const margin = 80;
         const visLeft = -prev.x / prev.scale;
@@ -2346,7 +2427,7 @@ export default function App() {
   // typing, so the first keystroke can begin IME composition instead of being lost.
   useEffect(() => {
     if (inputRef.current) {
-      inputRef.current.focus();
+      inputRef.current.focus({ preventScroll: true });
       if (shouldSelect) {
         inputRef.current.select();
         setShouldSelect(false);
