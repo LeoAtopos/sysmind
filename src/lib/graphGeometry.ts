@@ -101,6 +101,15 @@ function pointsNearlyEqual(a: Point, b: Point, epsilon = 1e-6): boolean {
   return nearlyEqual(a.x, b.x, epsilon) && nearlyEqual(a.y, b.y, epsilon);
 }
 
+function segmentsShareEndpoint(a: Point, b: Point, c: Point, d: Point): boolean {
+  return (
+    pointsNearlyEqual(a, c) ||
+    pointsNearlyEqual(a, d) ||
+    pointsNearlyEqual(b, c) ||
+    pointsNearlyEqual(b, d)
+  );
+}
+
 function segmentsOverlapOrIntersect(a: Point, b: Point, c: Point, d: Point): boolean {
   const epsilon = 1e-6;
   const orient = (p: Point, q: Point, r: Point) => cross(q.x - p.x, q.y - p.y, r.x - p.x, r.y - p.y);
@@ -149,6 +158,18 @@ function segmentsOverlapOrIntersect(a: Point, b: Point, c: Point, d: Point): boo
 
 function straightSegmentsRequireBend(a: Point, b: Point, c: Point, d: Point): boolean {
   const epsilon = 1e-6;
+  const sameUnorderedEndpoints =
+    (pointsNearlyEqual(a, c, epsilon) && pointsNearlyEqual(b, d, epsilon)) ||
+    (pointsNearlyEqual(a, d, epsilon) && pointsNearlyEqual(b, c, epsilon));
+
+  if (sameUnorderedEndpoints) {
+    return true;
+  }
+
+  if (segmentsShareEndpoint(a, b, c, d)) {
+    return false;
+  }
+
   const orient = (p: Point, q: Point, r: Point) => cross(q.x - p.x, q.y - p.y, r.x - p.x, r.y - p.y);
   const onSegment = (p: Point, q: Point, r: Point) =>
     q.x <= Math.max(p.x, r.x) + epsilon &&
@@ -188,16 +209,10 @@ function straightSegmentsRequireBend(a: Point, b: Point, c: Point, d: Point): bo
   return cOnAb || dOnAb || aOnCd || bOnCd;
 }
 
-function pathIntersectsPath(pathA: Point[], pathB: Point[]): boolean {
-  for (let i = 0; i < pathA.length - 1; i += 1) {
-    const a1 = pathA[i];
-    const a2 = pathA[i + 1];
-    for (let j = 0; j < pathB.length - 1; j += 1) {
-      const b1 = pathB[j];
-      const b2 = pathB[j + 1];
-      if (segmentsOverlapOrIntersect(a1, a2, b1, b2)) {
-        return true;
-      }
+function pathIntersectsSegment(path: Point[], segmentStart: Point, segmentEnd: Point): boolean {
+  for (let i = 0; i < path.length - 1; i += 1) {
+    if (segmentsOverlapOrIntersect(path[i], path[i + 1], segmentStart, segmentEnd)) {
+      return true;
     }
   }
   return false;
@@ -280,32 +295,29 @@ export function chooseBestCurveBend(params: {
     (connection): connection is Connection & { toId: string } => !!connection.toId && connection.id !== excludeConnId,
   );
 
-  const existingPaths = completedConnections
+  const existingSegments = completedConnections
     .map(connection => {
       const startNode = getNode(connection.fromId);
       const endNode = getNode(connection.toId);
       if (!startNode || !endNode) return null;
-      const rawBend = getConnectionCurveOffsetRaw(connection, startNode, endNode);
-      return sampleConnectionCenterPath(
-        startNode,
-        endNode,
-        getRenderedCurveBend(connection.fromId, connection.toId, rawBend),
-      );
+      return {
+        fromId: connection.fromId,
+        toId: connection.toId,
+        start: { x: startNode.x, y: startNode.y },
+        end: { x: endNode.x, y: endNode.y },
+      };
     })
-    .filter((path): path is Point[] => !!path);
+    .filter((segment): segment is { fromId: string; toId: string; start: Point; end: Point } => !!segment);
 
-  const hasStraightOverlap = completedConnections.some(connection => {
-    const startNode = getNode(connection.fromId);
-    const endNode = getNode(connection.toId);
-    if (!startNode || !endNode) return false;
-    return straightSegmentsRequireBend(from, to, startNode, endNode);
-  });
+  const hasStraightOverlap = existingSegments.some(segment =>
+    straightSegmentsRequireBend(from, to, segment.start, segment.end),
+  );
   if (!hasStraightOverlap) {
     return 0;
   }
 
   const candidates: number[] = [0];
-  const maxLevel = 6;
+  const maxLevel = 5;
   for (let level = 1; level <= maxLevel; level += 1) {
     const magnitude = CONNECTION_CURVE_BASE + (level - 1) * CONNECTION_CURVE_STEP;
     candidates.push(magnitude, -magnitude);
@@ -318,15 +330,17 @@ export function chooseBestCurveBend(params: {
     const renderedBend = getRenderedCurveBend(fromId, toId, rawBend);
     const testPath = sampleConnectionCenterPath(from, to, renderedBend);
 
-    let score = 0;
-    for (const path of existingPaths) {
-      if (pathIntersectsPath(testPath, path)) {
-        score += 1000;
+    let intersections = 0;
+    for (const segment of existingSegments) {
+      if (straightSegmentsRequireBend(from, to, segment.start, segment.end)) {
+        continue;
+      }
+      if (pathIntersectsSegment(testPath, segment.start, segment.end)) {
+        intersections += 1;
       }
     }
 
-    if (rawBend === 0) score += 10000;
-    score += Math.abs(rawBend) * 0.1;
+    const score = intersections * 1000 + (rawBend === 0 ? 10000 : 0) + Math.abs(rawBend) * 0.1;
 
     if (score < bestScore) {
       bestScore = score;
