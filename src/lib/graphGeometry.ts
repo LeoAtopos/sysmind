@@ -89,36 +89,118 @@ export function sampleConnectionCenterPath(from: Point, to: Point, renderedBend:
   return points;
 }
 
-function pointToSegmentDistance(p: Point, a: Point, b: Point): number {
-  const abx = b.x - a.x;
-  const aby = b.y - a.y;
-  const apx = p.x - a.x;
-  const apy = p.y - a.y;
-  const denom = abx * abx + aby * aby;
-  if (denom === 0) return Math.hypot(apx, apy);
-  const t = Math.max(0, Math.min(1, (apx * abx + apy * aby) / denom));
-  const qx = a.x + abx * t;
-  const qy = a.y + aby * t;
-  return Math.hypot(p.x - qx, p.y - qy);
+function cross(ax: number, ay: number, bx: number, by: number): number {
+  return ax * by - ay * bx;
 }
 
-function overlapPenalty(pathA: Point[], pathB: Point[]): number {
-  const threshold = 22;
-  let score = 0;
+function nearlyEqual(a: number, b: number, epsilon = 1e-6): boolean {
+  return Math.abs(a - b) <= epsilon;
+}
 
-  for (const point of pathA) {
-    let best = Infinity;
-    for (let i = 0; i < pathB.length - 1; i += 1) {
-      const distance = pointToSegmentDistance(point, pathB[i], pathB[i + 1]);
-      if (distance < best) best = distance;
-    }
-    if (best < threshold) {
-      const diff = threshold - best;
-      score += diff * diff;
-    }
+function pointsNearlyEqual(a: Point, b: Point, epsilon = 1e-6): boolean {
+  return nearlyEqual(a.x, b.x, epsilon) && nearlyEqual(a.y, b.y, epsilon);
+}
+
+function segmentsOverlapOrIntersect(a: Point, b: Point, c: Point, d: Point): boolean {
+  const epsilon = 1e-6;
+  const orient = (p: Point, q: Point, r: Point) => cross(q.x - p.x, q.y - p.y, r.x - p.x, r.y - p.y);
+  const onSegment = (p: Point, q: Point, r: Point) =>
+    q.x <= Math.max(p.x, r.x) + epsilon &&
+    q.x >= Math.min(p.x, r.x) - epsilon &&
+    q.y <= Math.max(p.y, r.y) + epsilon &&
+    q.y >= Math.min(p.y, r.y) - epsilon;
+
+  const o1 = orient(a, b, c);
+  const o2 = orient(a, b, d);
+  const o3 = orient(c, d, a);
+  const o4 = orient(c, d, b);
+
+  const properIntersection =
+    ((o1 > epsilon && o2 < -epsilon) || (o1 < -epsilon && o2 > epsilon)) &&
+    ((o3 > epsilon && o4 < -epsilon) || (o3 < -epsilon && o4 > epsilon));
+  if (properIntersection) {
+    return true;
   }
 
-  return score;
+  const colinear =
+    Math.abs(o1) <= epsilon &&
+    Math.abs(o2) <= epsilon &&
+    Math.abs(o3) <= epsilon &&
+    Math.abs(o4) <= epsilon;
+
+  if (colinear) {
+    const overlapX = Math.min(Math.max(a.x, b.x), Math.max(c.x, d.x)) - Math.max(Math.min(a.x, b.x), Math.min(c.x, d.x));
+    const overlapY = Math.min(Math.max(a.y, b.y), Math.max(c.y, d.y)) - Math.max(Math.min(a.y, b.y), Math.min(c.y, d.y));
+    const overlap = Math.max(overlapX, overlapY);
+    return overlap > epsilon;
+  }
+
+  const cOnAb = Math.abs(o1) <= epsilon && onSegment(a, c, b);
+  const dOnAb = Math.abs(o2) <= epsilon && onSegment(a, d, b);
+  const aOnCd = Math.abs(o3) <= epsilon && onSegment(c, a, d);
+  const bOnCd = Math.abs(o4) <= epsilon && onSegment(c, b, d);
+
+  const sharedEndpointTouch =
+    (pointsNearlyEqual(a, c, epsilon) || pointsNearlyEqual(a, d, epsilon) || pointsNearlyEqual(b, c, epsilon) || pointsNearlyEqual(b, d, epsilon)) &&
+    !(cOnAb || dOnAb || aOnCd || bOnCd);
+
+  return (cOnAb || dOnAb || aOnCd || bOnCd) && !sharedEndpointTouch;
+}
+
+function straightSegmentsRequireBend(a: Point, b: Point, c: Point, d: Point): boolean {
+  const epsilon = 1e-6;
+  const orient = (p: Point, q: Point, r: Point) => cross(q.x - p.x, q.y - p.y, r.x - p.x, r.y - p.y);
+  const onSegment = (p: Point, q: Point, r: Point) =>
+    q.x <= Math.max(p.x, r.x) + epsilon &&
+    q.x >= Math.min(p.x, r.x) - epsilon &&
+    q.y <= Math.max(p.y, r.y) + epsilon &&
+    q.y >= Math.min(p.y, r.y) - epsilon;
+
+  const o1 = orient(a, b, c);
+  const o2 = orient(a, b, d);
+  const o3 = orient(c, d, a);
+  const o4 = orient(c, d, b);
+
+  const properIntersection =
+    ((o1 > epsilon && o2 < -epsilon) || (o1 < -epsilon && o2 > epsilon)) &&
+    ((o3 > epsilon && o4 < -epsilon) || (o3 < -epsilon && o4 > epsilon));
+  if (properIntersection) {
+    return true;
+  }
+
+  const colinear =
+    Math.abs(o1) <= epsilon &&
+    Math.abs(o2) <= epsilon &&
+    Math.abs(o3) <= epsilon &&
+    Math.abs(o4) <= epsilon;
+
+  if (colinear) {
+    const overlapX = Math.min(Math.max(a.x, b.x), Math.max(c.x, d.x)) - Math.max(Math.min(a.x, b.x), Math.min(c.x, d.x));
+    const overlapY = Math.min(Math.max(a.y, b.y), Math.max(c.y, d.y)) - Math.max(Math.min(a.y, b.y), Math.min(c.y, d.y));
+    return Math.max(overlapX, overlapY) > epsilon;
+  }
+
+  const cOnAb = Math.abs(o1) <= epsilon && onSegment(a, c, b);
+  const dOnAb = Math.abs(o2) <= epsilon && onSegment(a, d, b);
+  const aOnCd = Math.abs(o3) <= epsilon && onSegment(c, a, d);
+  const bOnCd = Math.abs(o4) <= epsilon && onSegment(c, b, d);
+
+  return cOnAb || dOnAb || aOnCd || bOnCd;
+}
+
+function pathIntersectsPath(pathA: Point[], pathB: Point[]): boolean {
+  for (let i = 0; i < pathA.length - 1; i += 1) {
+    const a1 = pathA[i];
+    const a2 = pathA[i + 1];
+    for (let j = 0; j < pathB.length - 1; j += 1) {
+      const b1 = pathB[j];
+      const b2 = pathB[j + 1];
+      if (segmentsOverlapOrIntersect(a1, a2, b1, b2)) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function getEdgePoint(from: Point, to: Point, nodeSize: { width: number; height: number }, isNodeFocused: boolean): Point {
@@ -197,14 +279,6 @@ export function chooseBestCurveBend(params: {
   const completedConnections = connections.filter(
     (connection): connection is Connection & { toId: string } => !!connection.toId && connection.id !== excludeConnId,
   );
-  const pairKey = fromId < toId ? `${fromId}::${toId}` : `${toId}::${fromId}`;
-  const existingPairCount = completedConnections.filter(connection => {
-    const currentPairKey =
-      connection.fromId < connection.toId
-        ? `${connection.fromId}::${connection.toId}`
-        : `${connection.toId}::${connection.fromId}`;
-    return currentPairKey === pairKey;
-  }).length;
 
   const existingPaths = completedConnections
     .map(connection => {
@@ -220,8 +294,18 @@ export function chooseBestCurveBend(params: {
     })
     .filter((path): path is Point[] => !!path);
 
-  const maxLevel = Math.max(4, Math.ceil(existingPairCount / 2) + 3);
+  const hasStraightOverlap = completedConnections.some(connection => {
+    const startNode = getNode(connection.fromId);
+    const endNode = getNode(connection.toId);
+    if (!startNode || !endNode) return false;
+    return straightSegmentsRequireBend(from, to, startNode, endNode);
+  });
+  if (!hasStraightOverlap) {
+    return 0;
+  }
+
   const candidates: number[] = [0];
+  const maxLevel = 6;
   for (let level = 1; level <= maxLevel; level += 1) {
     const magnitude = CONNECTION_CURVE_BASE + (level - 1) * CONNECTION_CURVE_STEP;
     candidates.push(magnitude, -magnitude);
@@ -236,13 +320,13 @@ export function chooseBestCurveBend(params: {
 
     let score = 0;
     for (const path of existingPaths) {
-      score += overlapPenalty(testPath, path);
-      score += overlapPenalty(path, testPath) * 0.5;
+      if (pathIntersectsPath(testPath, path)) {
+        score += 1000;
+      }
     }
 
-    if (existingPairCount > 0 && rawBend === 0) score += 9999;
-    if (existingPairCount === 0 && rawBend !== 0) score += 40;
-    score += Math.abs(rawBend) * 0.35;
+    if (rawBend === 0) score += 10000;
+    score += Math.abs(rawBend) * 0.1;
 
     if (score < bestScore) {
       bestScore = score;

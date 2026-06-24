@@ -386,6 +386,7 @@ export default function App() {
   const [shortcuts, setShortcuts] = useState<KeyboardShortcuts>(DEFAULT_SHORTCUTS);
   const [isShortcutsModalOpen, setIsShortcutsModalOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
   const showToast = useCallback((message: string, type: 'success' | 'error' = 'success') => {
@@ -475,6 +476,11 @@ export default function App() {
   // No initialization effect needed as we initialize in useState
 
   const isMac = useMemo(() => /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent), []);
+  const isBrowserApp = useMemo(() => {
+    if (typeof window === 'undefined') return false;
+    const electronVersion = (window as Window & { process?: { versions?: { electron?: string } } }).process?.versions?.electron;
+    return !electronVersion;
+  }, []);
   const ctrlKey = isMac ? 'Cmd' : 'Ctrl';
 
   const t = useMemo(() => TRANSLATIONS[language], [language]);
@@ -627,6 +633,13 @@ export default function App() {
     }
     document.documentElement.style.colorScheme = theme;
   }, [theme]);
+
+  useEffect(() => {
+    const syncFullscreenState = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    syncFullscreenState();
+    document.addEventListener('fullscreenchange', syncFullscreenState);
+    return () => document.removeEventListener('fullscreenchange', syncFullscreenState);
+  }, []);
 
 
 
@@ -788,6 +801,20 @@ export default function App() {
       return false;
     }
   }, [loadedFileHandle, loadedFileMeta, exportData, t, handleExport, showToast]);
+
+  const toggleFullscreen = useCallback(async () => {
+    if (!isBrowserApp) return;
+
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else {
+        await document.documentElement.requestFullscreen();
+      }
+    } catch (err) {
+      console.error('Fullscreen toggle failed:', err);
+    }
+  }, [isBrowserApp]);
 
   const handleNewCanvas = useCallback(async () => {
     const saved = await handleSaveToLoadedFile();
@@ -1566,6 +1593,8 @@ export default function App() {
 
             setConnections(nextConns);
             const nextFocused = { type: 'node', id: newNode.id };
+            setSelectedNodeIds([]);
+            setSelectedConnectionIds([]);
             setFocused(nextFocused);
             setShouldSelect(true);
             setIsEditing(true);
@@ -3732,6 +3761,9 @@ export default function App() {
         onSave={setShortcuts}
         theme={theme}
         onThemeSave={setTheme}
+        isBrowserApp={isBrowserApp}
+        isFullscreen={isFullscreen}
+        onToggleFullscreen={toggleFullscreen}
         t={t}
         ctrlKey={ctrlKey}
       />

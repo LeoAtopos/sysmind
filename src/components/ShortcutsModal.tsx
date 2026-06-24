@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Minus, Moon, Sun } from 'lucide-react';
+import { Maximize2, Minimize2, Minus, Moon, Sun } from 'lucide-react';
 
 import { KeyboardShortcuts, DEFAULT_SHORTCUTS } from '../types';
 import { getShortcutConflicts, formatShortcutLabel } from '../lib/shortcuts';
@@ -12,6 +12,9 @@ interface ShortcutsModalProps {
   onSave: (shortcuts: KeyboardShortcuts) => void;
   theme: 'light' | 'dark';
   onThemeSave: (theme: 'light' | 'dark') => void;
+  isBrowserApp: boolean;
+  isFullscreen: boolean;
+  onToggleFullscreen: () => void;
   t: TranslationSet;
   ctrlKey: string;
 }
@@ -23,6 +26,9 @@ export function ShortcutsModal({
   onSave,
   theme,
   onThemeSave,
+  isBrowserApp,
+  isFullscreen,
+  onToggleFullscreen,
   t,
   ctrlKey,
 }: ShortcutsModalProps) {
@@ -134,7 +140,7 @@ export function ShortcutsModal({
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4">
+        <div className="flex-1 overflow-y-auto p-4" onWheelCapture={(e) => e.stopPropagation()}>
           <div className="space-y-4">
             <div className="app-settings-section rounded-xl border border-slate-200 p-4">
               <div className="app-settings-heading text-sm font-semibold">{t.appearanceSettings}</div>
@@ -161,6 +167,21 @@ export function ShortcutsModal({
                   <Moon size={16} />
                   {t.darkMode}
                 </button>
+                {isBrowserApp && (
+                  <button
+                    onClick={onToggleFullscreen}
+                    className={`app-segment-button px-3 py-2 rounded-lg transition-colors text-sm font-medium flex items-center gap-2 ${
+                      isFullscreen
+                        ? 'app-segment-active bg-slate-900 text-white'
+                        : 'text-slate-600 hover:bg-slate-100'
+                    }`}
+                    title={isFullscreen ? t.exitFullscreen : t.fullscreen}
+                    aria-label={isFullscreen ? t.exitFullscreen : t.fullscreen}
+                  >
+                    {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                    {isFullscreen ? t.exitFullscreen : t.fullscreen}
+                  </button>
+                )}
               </div>
             </div>
 
