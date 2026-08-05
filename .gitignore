@@ -1,0 +1,12 @@
+node_modules/
+build/
+dist/
+*release*/
+itchio-release/
+coverage/
+.DS_Store
+.playwright-mcp
+*.log
+.env*
+!.env.example
+*.zip
