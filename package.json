@@ -33,7 +33,12 @@
     "asar": true,
     "win": {
       "target": [
-        { "target": "dir", "arch": ["x64"] }
+        {
+          "target": "dir",
+          "arch": [
+            "x64"
+          ]
+        }
       ]
     },
     "extraFiles": []
@@ -56,6 +61,7 @@
     "autoprefixer": "^10.4.21",
     "electron": "^41.1.0",
     "electron-builder": "^26.8.1",
+    "gh-pages": "^6.3.0",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
