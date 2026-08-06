@@ -19,9 +19,19 @@ if (Test-Path -LiteralPath $checksumFile) {
 }
 
 Compress-Archive -LiteralPath $executable -DestinationPath $package -CompressionLevel Optimal
-Get-FileHash -LiteralPath $package -Algorithm SHA256 |
-  ForEach-Object { "$($_.Hash.ToLowerInvariant())  $(Split-Path -Leaf $package)" } |
-  Set-Content -Encoding ascii -LiteralPath $checksumFile
+$sha256 = [System.Security.Cryptography.SHA256]::Create()
+$packageStream = [System.IO.File]::OpenRead($package)
+
+try {
+  $hashBytes = $sha256.ComputeHash($packageStream)
+}
+finally {
+  $packageStream.Dispose()
+  $sha256.Dispose()
+}
+
+$hash = ([System.BitConverter]::ToString($hashBytes)).Replace('-', '').ToLowerInvariant()
+"$hash  $(Split-Path -Leaf $package)" | Set-Content -Encoding ascii -LiteralPath $checksumFile
 
 Write-Output "Portable package created: $package"
 Write-Output "Checksum written: $checksumFile"
