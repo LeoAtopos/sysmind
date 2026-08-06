@@ -48,6 +48,8 @@ The repository supports three independent targets:
 | GitHub Pages | `npm run build:pages` | `forpages/` |
 | Windows Desktop | `npm run tauri:build` | `fortauri/release/SysMind-tauri-portable-win-x64.zip` |
 
+[Download SysMind for Windows](./fortauri/release/SysMind-tauri-portable-win-x64.zip)
+
 Install root dependencies before running the local or Pages targets:
 
 ```bash

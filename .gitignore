@@ -1,6 +1,10 @@
 node_modules/
 build/
 dist/
+forpages/
+fortauri/dist/
+fortauri/node_modules/
+fortauri/src-tauri/target/
 coverage/
 .DS_Store
 .playwright-mcp
@@ -8,3 +12,4 @@ coverage/
 .env*
 !.env.example
 *.zip
+!fortauri/release/*.zip
