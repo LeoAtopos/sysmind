@@ -8,12 +8,15 @@
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
     "build": "vite build",
-    "build:pages": "vite build --outDir forpages --base /sysmind/",
+    "build:pages": "vite build --mode pages --outDir forpages",
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
     "electron:dev": "NODE_ENV=development electron .",
-    "electron:build": "vite build && electron-builder --win"
+    "electron:build": "vite build --base ./ && electron-builder --win",
+    "electron:build:forelectron": "vite build --base ./ && electron-builder --win --config.directories.output=forelectron",
+    "tauri:dev": "npm --prefix fortauri run tauri:dev",
+    "tauri:build": "npm --prefix fortauri run tauri:build"
   },
   "build": {
     "appId": "com.sysmind.app",

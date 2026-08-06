@@ -38,6 +38,39 @@ A powerful and intuitive system mapping tool designed for visualizing ideas, pla
 - `Ctrl + Z` (or `Cmd + Z` on Mac) to undo
 - `Ctrl + Y` (or `Cmd + Y` on Mac) to redo
 
+## Download
+
+- Electron Windows package: [forelectron/SysMind-win-x64.zip](./forelectron/SysMind-win-x64.zip)
+
+## Tauri Desktop Build
+
+The Tauri build is much smaller than the Electron package because it uses the
+system WebView instead of bundling Chromium.
+
+Prerequisites:
+- Rust/Cargo installed from https://www.rust-lang.org/tools/install
+- Windows WebView2 Runtime installed
+
+Build from the repository root:
+
+```bash
+npm run tauri:build
+```
+
+Or build inside the standalone Tauri project:
+
+```bash
+cd fortauri
+npm install
+npm run tauri:build
+```
+
+The Windows installer is written to:
+
+```text
+fortauri/src-tauri/target/release/bundle/nsis/
+```
+
 ## Controls
 
 | Action            | Shortcut                       |
