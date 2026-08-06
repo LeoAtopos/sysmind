@@ -49,3 +49,4 @@ jobs:
           files: |
             fortauri/release/SysMind-tauri-portable-win-x64.zip
             fortauri/release/SysMind-tauri-portable-win-x64.zip.sha256
+          overwrite_files: true
