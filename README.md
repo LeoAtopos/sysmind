@@ -38,37 +38,29 @@ A powerful and intuitive system mapping tool designed for visualizing ideas, pla
 - `Ctrl + Z` (or `Cmd + Z` on Mac) to undo
 - `Ctrl + Y` (or `Cmd + Y` on Mac) to redo
 
-## Download
+## Build Targets
 
-- Electron Windows package: [forelectron/SysMind-win-x64.zip](./forelectron/SysMind-win-x64.zip)
+The repository supports three independent targets:
 
-## Tauri Desktop Build
+| Target | Command | Output |
+| --- | --- | --- |
+| Local Web | `npm run dev` | `http://localhost:3000` |
+| GitHub Pages | `npm run build:pages` | `forpages/` |
+| Windows Desktop | `npm run tauri:build` | `fortauri/release/SysMind-tauri-portable-win-x64.zip` |
 
-The Tauri build is much smaller than the Electron package because it uses the
-system WebView instead of bundling Chromium.
-
-Prerequisites:
-- Rust/Cargo installed from https://www.rust-lang.org/tools/install
-- Windows WebView2 Runtime installed
-
-Build from the repository root:
+Install root dependencies before running the local or Pages targets:
 
 ```bash
-npm run tauri:build
+npm install
 ```
 
-Or build inside the standalone Tauri project:
+The Tauri target also requires Rust/Cargo and the Windows WebView2 Runtime. Its
+dependencies are installed separately:
 
 ```bash
 cd fortauri
 npm install
 npm run tauri:build
-```
-
-The Windows installer is written to:
-
-```text
-fortauri/src-tauri/target/release/bundle/nsis/
 ```
 
 ## Controls

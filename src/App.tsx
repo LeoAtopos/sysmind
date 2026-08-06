@@ -476,11 +476,7 @@ export default function App() {
   // No initialization effect needed as we initialize in useState
 
   const isMac = useMemo(() => /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent), []);
-  const isBrowserApp = useMemo(() => {
-    if (typeof window === 'undefined') return false;
-    const electronVersion = (window as Window & { process?: { versions?: { electron?: string } } }).process?.versions?.electron;
-    return !electronVersion;
-  }, []);
+  const isBrowserApp = true;
   const ctrlKey = isMac ? 'Cmd' : 'Ctrl';
 
   const t = useMemo(() => TRANSLATIONS[language], [language]);

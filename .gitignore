@@ -1,8 +1,11 @@
 node_modules/
 build/
 dist/
-*release*/
-itchio-release/
+forpages/
+fortauri/dist/
+fortauri/node_modules/
+fortauri/release/
+fortauri/src-tauri/target/
 coverage/
 .DS_Store
 .playwright-mcp

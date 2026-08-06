@@ -4,47 +4,16 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
     "build": "vite build",
     "build:pages": "vite build --mode pages --outDir forpages",
     "preview": "vite preview",
+    "preview:pages": "vite preview --outDir forpages",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "electron:dev": "NODE_ENV=development electron .",
-    "electron:build": "vite build --base ./ && electron-builder --win",
-    "electron:build:forelectron": "vite build --base ./ && electron-builder --win --config.directories.output=forelectron",
     "tauri:dev": "npm --prefix fortauri run tauri:dev",
     "tauri:build": "npm --prefix fortauri run tauri:build"
-  },
-  "build": {
-    "appId": "com.sysmind.app",
-    "productName": "SysMind",
-    "directories": {
-      "output": "release"
-    },
-    "files": [
-      "dist/**/*",
-      "electron/**/*",
-      "!node_modules/**/*",
-      "!release/**/*",
-      "!release_zip/**/*",
-      "!release_latest/**/*"
-    ],
-    "extraResources": [],
-    "asar": true,
-    "win": {
-      "target": [
-        {
-          "target": "dir",
-          "arch": [
-            "x64"
-          ]
-        }
-      ]
-    },
-    "extraFiles": []
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
@@ -62,9 +31,6 @@
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
     "autoprefixer": "^10.4.21",
-    "electron": "^41.1.0",
-    "electron-builder": "^26.8.1",
-    "gh-pages": "^6.3.0",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",

@@ -1,6 +1,6 @@
 # SysMind Tauri
 
-This folder contains a minimal Tauri wrapper for the SysMind web app.
+This folder contains the standalone Tauri desktop build for SysMind.
 
 ## Setup
 
@@ -22,12 +22,12 @@ This folder contains a minimal Tauri wrapper for the SysMind web app.
    npm run tauri:dev
    ```
 
-5. Build for Windows:
+5. Build the portable Windows package:
    ```bash
    npm run tauri:build
    ```
 
-The generated NSIS installer is written to `src-tauri/target/release/bundle/nsis/`.
+The portable package is written to `release/SysMind-tauri-portable-win-x64.zip`.
 
 ## Notes
 

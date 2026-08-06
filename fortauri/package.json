@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build --bundles nsis"
+    "tauri:build": "tauri build --no-bundle && powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-portable.ps1"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
