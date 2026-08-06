@@ -48,7 +48,7 @@ The repository supports three independent targets:
 | GitHub Pages | `npm run build:pages` | `forpages/` |
 | Windows Desktop | `npm run tauri:build` | `fortauri/release/SysMind-tauri-portable-win-x64.zip` |
 
-[Download SysMind for Windows](./fortauri/release/SysMind-tauri-portable-win-x64.zip)
+[Download SysMind for Windows](https://raw.githubusercontent.com/LeoAtopos/sysmind/main/fortauri/release/SysMind-tauri-portable-win-x64.zip)
 
 [Open SysMind on GitHub Pages](https://leoatopos.github.io/sysmind/)
 
