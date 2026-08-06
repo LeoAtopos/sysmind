@@ -28,6 +28,8 @@ This folder contains the standalone Tauri desktop build for SysMind.
    ```
 
 The portable package is written to `release/SysMind-tauri-portable-win-x64.zip`.
+The published download is attached to GitHub Releases together with a
+`SysMind-tauri-portable-win-x64.zip.sha256` checksum file.
 
 ## Notes
 

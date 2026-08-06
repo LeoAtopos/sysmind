@@ -46,9 +46,11 @@ The repository supports three independent targets:
 | --- | --- | --- |
 | Local Web | `npm run dev` | `http://localhost:3000` |
 | GitHub Pages | `npm run build:pages` | `forpages/` |
-| Windows Desktop | `npm run tauri:build` | `fortauri/release/SysMind-tauri-portable-win-x64.zip` |
+| Windows Desktop | `npm run tauri:build` | `fortauri/release/SysMind-tauri-portable-win-x64.zip` and GitHub Release asset |
 
-[Download SysMind for Windows](https://raw.githubusercontent.com/LeoAtopos/sysmind/main/fortauri/release/SysMind-tauri-portable-win-x64.zip)
+[Download SysMind for Windows](https://github.com/LeoAtopos/sysmind/releases/latest/download/SysMind-tauri-portable-win-x64.zip)
+
+[View GitHub Releases](https://github.com/LeoAtopos/sysmind/releases)
 
 [Open SysMind on GitHub Pages](https://leoatopos.github.io/sysmind/)
 
@@ -66,6 +68,8 @@ cd fortauri
 npm install
 npm run tauri:build
 ```
+
+Each Windows release also publishes a SHA256 checksum file alongside the zip.
 
 ## Controls
 

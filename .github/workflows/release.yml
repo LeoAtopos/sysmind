@@ -1,0 +1,51 @@
+name: Publish GitHub Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag to publish'
+        required: true
+        default: 'v1.0.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: fortauri/package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install Tauri dependencies
+        run: npm ci
+        working-directory: fortauri
+
+      - name: Build portable package
+        run: npm run tauri:build
+        working-directory: fortauri
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref_name }}
+          name: SysMind ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref_name }}
+          generate_release_notes: true
+          files: |
+            fortauri/release/SysMind-tauri-portable-win-x64.zip
+            fortauri/release/SysMind-tauri-portable-win-x64.zip.sha256
