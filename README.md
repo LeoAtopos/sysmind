@@ -50,6 +50,8 @@ The repository supports three independent targets:
 
 [Download SysMind for Windows](./fortauri/release/SysMind-tauri-portable-win-x64.zip)
 
+[Open SysMind on GitHub Pages](https://leoatopos.github.io/sysmind/)
+
 Install root dependencies before running the local or Pages targets:
 
 ```bash
