@@ -5,8 +5,9 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, ArrowRight, ArrowLeft, ArrowLeftRight, Minus, MousePointer2, Download, Upload, Save, FilePlus2, ChevronDown, ChevronUp, Settings } from 'lucide-react';
+import { Search, ArrowRight, ArrowLeft, ArrowLeftRight, Minus, MousePointer2, Download, Upload, Save, FilePlus2, ChevronDown, ChevronUp, Settings, GraduationCap } from 'lucide-react';
 
+import { QuickStartGuide } from './components/QuickStartGuide';
 import { ShortcutsModal } from './components/ShortcutsModal';
 import {
   CONNECTION_LABEL_H_PADDING,
@@ -26,6 +27,7 @@ import {
   NODE_REPEL_MAX_ITERATIONS,
   NODE_REPEL_PADDING,
   NODE_WIDTH,
+  QUICK_START_SEEN_STORAGE_KEY,
   NODE_TEXT_H_PADDING,
   NODE_TEXT_LINE_HEIGHT,
   NODE_TEXT_V_PADDING,
@@ -41,9 +43,15 @@ import {
   getConnectionFocusPoint,
 } from './lib/graphGeometry';
 import { getNodeCanvasVisual, getNodeStyleClasses, getNodeTextClasses } from './lib/nodePresentation';
+import {
+  isTutorialCanvasMode,
+  TUTORIAL_CHANNEL,
+  TutorialCanvasState,
+  TutorialParentMessage,
+} from './lib/tutorialBridge';
 import { formatShortcutLabel, matchesShortcut } from './lib/shortcuts';
 import { AppLanguage, TRANSLATIONS } from './lib/translations';
-import { Node, Connection, ConnectionStyle, NodeStyle, FocusedElement, KeyboardShortcuts, DEFAULT_SHORTCUTS } from './types';
+import { Node, Connection, ConnectionStyle, NodeStyle, FocusedElement, KeyboardShortcuts, ShortcutConfig, DEFAULT_SHORTCUTS } from './types';
 
 type PerfDebugState = {
   lastFlushTs: number;
@@ -346,6 +354,7 @@ const resolveNodeOverlaps = (inputNodes: Node[], lockedNodeId?: string) => {
 
 
 export default function App() {
+  const tutorialCanvasMode = useMemo(isTutorialCanvasMode, []);
   const [language, setLanguage] = useState<AppLanguage>(() => {
     try {
       const savedLanguage = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
@@ -385,14 +394,37 @@ export default function App() {
   const [selectionBox, setSelectionBox] = useState<{ start: { x: number; y: number }; current: { x: number; y: number } } | null>(null);
   const [shortcuts, setShortcuts] = useState<KeyboardShortcuts>(DEFAULT_SHORTCUTS);
   const [isShortcutsModalOpen, setIsShortcutsModalOpen] = useState(false);
+  const [isQuickStartOpen, setIsQuickStartOpen] = useState(() => {
+    if (tutorialCanvasMode) return false;
+    try {
+      return window.localStorage.getItem(QUICK_START_SEEN_STORAGE_KEY) !== '1';
+    } catch {
+      return true;
+    }
+  });
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [tutorialActionId, setTutorialActionId] = useState<string | null>(null);
+  const [tutorialActionComplete, setTutorialActionComplete] = useState(false);
+  const [tutorialCopySignal, setTutorialCopySignal] = useState(0);
+  const [tutorialSaveSignal, setTutorialSaveSignal] = useState(0);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const tutorialActionCompleteRef = useRef(false);
+  const tutorialScenarioLoadedRef = useRef(false);
+  const tutorialNodeSourceRef = useRef<Record<string, string>>({});
 
   const showToast = useCallback((message: string, type: 'success' | 'error' = 'success') => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToast({ message, type });
     toastTimerRef.current = setTimeout(() => setToast(null), 2000);
+  }, []);
+  const closeQuickStart = useCallback(() => {
+    setIsQuickStartOpen(false);
+    try {
+      window.localStorage.setItem(QUICK_START_SEEN_STORAGE_KEY, '1');
+    } catch {
+      // The guide can still be closed when localStorage is unavailable.
+    }
   }, []);
   const previousGraphSizeRef = useRef({ nodes: 0, connections: 0 });
 
@@ -603,6 +635,15 @@ export default function App() {
   // Native wheel event handler ref to allow adding/removing non-passive listener
   const wheelHandlerRef = useRef<((e: WheelEvent) => void) | null>(null);
 
+  useEffect(() => {
+    if (!tutorialCanvasMode) return;
+    const animationFrame = window.requestAnimationFrame(() => {
+      window.focus();
+      canvasRef.current?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [tutorialActionId, tutorialCanvasMode]);
+
 
   const isSameFocus = (a: FocusedElement, b: FocusedElement) => {
     if (a === null && b === null) return true;
@@ -611,6 +652,36 @@ export default function App() {
     if (a.type === 'multi-select' || b.type === 'multi-select') return true;
     return (a as { id: string }).id === (b as { id: string }).id;
   };
+
+  useEffect(() => {
+    tutorialActionCompleteRef.current = tutorialActionComplete;
+  }, [tutorialActionComplete]);
+
+  useEffect(() => {
+    tutorialNodeSourceRef.current = { ...nodeSourceRef.current };
+  }, [connections, focused, nodes]);
+
+  useEffect(() => {
+    if (!tutorialCanvasMode || !tutorialScenarioLoadedRef.current) return;
+    const state: TutorialCanvasState = {
+      nodes,
+      connections,
+      focused,
+      isEditing,
+      searchQuery,
+      selectedIndex,
+      canvasView,
+      selectedNodeIds,
+      selectedConnectionIds,
+      history,
+      nodeSources: { ...tutorialNodeSourceRef.current },
+      shortcutsOpen: isShortcutsModalOpen,
+      copySignal: tutorialCopySignal,
+      saveSignal: tutorialSaveSignal,
+      actionId: tutorialActionId,
+    };
+    window.parent.postMessage({ channel: TUTORIAL_CHANNEL, kind: 'snapshot', state }, '*');
+  }, [canvasView, connections, focused, history, isEditing, isShortcutsModalOpen, nodes, searchQuery, selectedConnectionIds, selectedIndex, selectedNodeIds, tutorialActionId, tutorialCanvasMode, tutorialCopySignal, tutorialSaveSignal]);
 
   useEffect(() => {
     try {
@@ -831,6 +902,80 @@ export default function App() {
     });
   }, [handleSaveToLoadedFile]);
 
+  useEffect(() => {
+    if (!tutorialCanvasMode) return;
+
+    const applyTutorialState = (state: TutorialCanvasState | (Omit<TutorialCanvasState, 'isEditing' | 'searchQuery' | 'selectedIndex' | 'shortcutsOpen' | 'copySignal' | 'saveSignal' | 'actionId'> & Partial<TutorialCanvasState>), actionId: string) => {
+      setNodes(state.nodes);
+      setConnections(state.connections);
+      setFocused(state.focused);
+      setIsEditing(state.isEditing ?? false);
+      setShouldSelect(true);
+      setSearchQuery(state.searchQuery ?? null);
+      setSelectedIndex(state.selectedIndex ?? 0);
+      setCanvasView(state.canvasView);
+      setSelectedNodeIds(state.selectedNodeIds);
+      setSelectedConnectionIds(state.selectedConnectionIds);
+      setHistory(state.history);
+      nodeSourceRef.current = { ...state.nodeSources };
+      tutorialNodeSourceRef.current = { ...state.nodeSources };
+      setIsShortcutsModalOpen(state.shortcutsOpen ?? false);
+      setTutorialCopySignal(state.copySignal ?? 0);
+      setTutorialSaveSignal(state.saveSignal ?? 0);
+      setTutorialActionId(actionId);
+      setTutorialActionComplete(false);
+      tutorialScenarioLoadedRef.current = true;
+      clipboardRef.current = null;
+    };
+
+    const handleTutorialMessage = (event: MessageEvent<TutorialParentMessage>) => {
+      if (event.source !== window.parent || event.data?.channel !== TUTORIAL_CHANNEL) return;
+      const message = event.data;
+
+      if (message.kind === 'load-state' || message.kind === 'restore-state') {
+        applyTutorialState(message.state, message.actionId);
+        return;
+      }
+
+      if (message.kind === 'prepare-action') {
+        setTutorialActionId(message.actionId);
+        setTutorialActionComplete(false);
+        if (message.focused !== undefined) setFocused(message.focused);
+        if (message.closeSearch) setSearchQuery(null);
+        setIsEditing(false);
+        setIsShortcutsModalOpen(false);
+        return;
+      }
+
+      if (message.kind === 'set-action-complete') {
+        setTutorialActionComplete(message.complete);
+        return;
+      }
+
+      if (message.kind === 'simulate-shortcut') {
+        const config = message.shortcut;
+        const key = config.key;
+        const code = key === ' ' ? 'Space' : key;
+        const eventOptions = {
+          key,
+          code,
+          ctrlKey: !!config.ctrl,
+          metaKey: !!config.meta,
+          shiftKey: !!config.shift,
+          altKey: !!config.alt,
+          bubbles: true,
+          cancelable: true,
+        };
+        window.dispatchEvent(new KeyboardEvent('keydown', eventOptions));
+        window.dispatchEvent(new KeyboardEvent('keyup', eventOptions));
+      }
+    };
+
+    window.addEventListener('message', handleTutorialMessage);
+    window.parent.postMessage({ channel: TUTORIAL_CHANNEL, kind: 'ready' }, '*');
+    return () => window.removeEventListener('message', handleTutorialMessage);
+  }, [tutorialCanvasMode]);
+
   const handleImportFromPicker = useCallback(async () => {
     try {
       // Check if running in iframe (itch.io) - fallback to file input
@@ -1043,6 +1188,85 @@ export default function App() {
   // Keyboard Handlers
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (isQuickStartOpen) return;
+
+      if (tutorialCanvasMode && tutorialActionCompleteRef.current && e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        window.parent.postMessage({ channel: TUTORIAL_CHANNEL, kind: 'advance-request' }, '*');
+        return;
+      }
+
+      if (tutorialCanvasMode) {
+        const repeatableActionComplete = tutorialActionCompleteRef.current
+          && ['cycle-node-style', 'move-node', 'cycle-connection-style', 'move-endpoint', 'adjust-curve', 'zoom-in', 'zoom-out'].includes(tutorialActionId ?? '');
+        if (tutorialActionCompleteRef.current && !repeatableActionComplete) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          return;
+        }
+        const isPlainTextEditingKey = !e.ctrlKey && !e.metaKey && !e.altKey && (
+          e.key.length === 1
+          || ['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'Enter', 'Escape'].includes(e.key)
+        );
+        const isEditingCommand = (e.ctrlKey || e.metaKey) && ['a', 'c', 'v', 'x'].includes(e.key.toLowerCase());
+        const isCtrlArrow = (e.ctrlKey || e.metaKey) && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key);
+        const isShiftArrow = e.shiftKey && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key);
+        const actionShortcut: Partial<Record<string, ShortcutConfig>> = {
+          'create-node': shortcuts.createNode,
+          'edit-node': shortcuts.editText,
+          'create-connection': shortcuts.createConnection,
+          'complete-connection': shortcuts.createNode,
+          'create-node-below': shortcuts.createNodeBelow,
+          'return-connection': shortcuts.returnConnection,
+          'cycle-node-style': shortcuts.cycleStyle,
+          'edit-connection': shortcuts.editText,
+          'cycle-connection-style': shortcuts.cycleStyle,
+          'search-link': shortcuts.search,
+          'focus-left': shortcuts.moveLeft,
+          'focus-right': shortcuts.moveRight,
+          'focus-up': shortcuts.moveUp,
+          'focus-down': shortcuts.moveDown,
+          'delete-node': shortcuts.delete,
+          'delete-connection': shortcuts.delete,
+          'zoom-in': shortcuts.zoomIn,
+          'zoom-out': shortcuts.zoomOut,
+          'zoom-reset': shortcuts.zoomReset,
+          undo: shortcuts.undo,
+          redo: shortcuts.redo,
+          copy: shortcuts.copy,
+          paste: shortcuts.paste,
+          save: shortcuts.save,
+          'open-settings': shortcuts.openShortcuts,
+        };
+
+        let allowed = false;
+        if (isEditing) {
+          allowed = isPlainTextEditingKey || isEditingCommand;
+        } else if (searchQuery !== null) {
+          allowed = isPlainTextEditingKey
+            || isEditingCommand
+            || matchesShortcut(e, shortcuts.moveUp)
+            || matchesShortcut(e, shortcuts.moveDown)
+            || e.key === 'Tab';
+        } else if (tutorialActionId === 'move-node' || tutorialActionId === 'move-endpoint') {
+          allowed = isCtrlArrow;
+        } else if (tutorialActionId === 'adjust-curve') {
+          allowed = isShiftArrow;
+        } else if (tutorialActionId === 'straighten-line') {
+          allowed = e.shiftKey && e.key === 'Enter';
+        } else {
+          const allowedShortcut = tutorialActionId ? actionShortcut[tutorialActionId] : undefined;
+          allowed = !!allowedShortcut && matchesShortcut(e, allowedShortcut);
+        }
+
+        if (!allowed) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          return;
+        }
+      }
+
       // If editing text, handle finish/cancel
       if (isEditing) {
         if (matchesShortcut(e, shortcuts.save)) {
@@ -1084,6 +1308,11 @@ export default function App() {
       // Save file (override browser's Cmd+S / Ctrl+S)
       if (matchesShortcut(e, shortcuts.save)) {
         e.preventDefault();
+        if (tutorialCanvasMode) {
+          setTutorialSaveSignal(current => current + 1);
+          showToast(t.saveSuccess);
+          return;
+        }
         handleSaveToLoadedFile();
         return;
       }
@@ -1107,6 +1336,7 @@ export default function App() {
         );
 
         clipboardRef.current = { nodes: copiedNodes, connections: copiedConnections };
+        if (tutorialCanvasMode) setTutorialCopySignal(current => current + 1);
         showToast(`${t.copySuccess} (${copiedNodes.length})`);
         return;
       }
@@ -1679,7 +1909,7 @@ export default function App() {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [focused, isEditing, nodes, connections, canvasOffset, canvasScale, searchQuery, searchResults, selectedIndex, lastStyle, defaultOffset, selectedNodeIds, selectedConnectionIds, shortcuts, matchesShortcut, handleSaveToLoadedFile, showToast, t, pushHistory, draggingNewConnection, getNode, createConnection, getBestCurveBend, lastDirection]);
+  }, [focused, isEditing, nodes, connections, canvasOffset, canvasScale, searchQuery, searchResults, selectedIndex, lastStyle, defaultOffset, selectedNodeIds, selectedConnectionIds, shortcuts, matchesShortcut, handleSaveToLoadedFile, showToast, t, pushHistory, draggingNewConnection, getNode, createConnection, getBestCurveBend, lastDirection, isQuickStartOpen, tutorialCanvasMode, tutorialActionId]);
 
   // Spatial Navigation
   const moveFocus = (key: string) => {
@@ -1878,6 +2108,7 @@ export default function App() {
   };
 
   const handleNodeMouseDown = (e: React.MouseEvent, nodeId: string) => {
+    if (tutorialCanvasMode) return;
     if (e.button === 2) return;
     if (e.button !== 0) return;
     e.stopPropagation();
@@ -1917,6 +2148,7 @@ export default function App() {
   };
 
   const handleConnectionMouseDown = (e: React.MouseEvent, connId: string) => {
+    if (tutorialCanvasMode) return;
     if (e.button === 2) return;
     if (e.button !== 0) return;
     e.stopPropagation();
@@ -1938,6 +2170,7 @@ export default function App() {
   };
 
   const handleConnectionEndpointMouseDown = (e: React.MouseEvent, connId: string, endpoint: 'start' | 'end') => {
+    if (tutorialCanvasMode) return;
     if (e.button !== 0) return;
     e.stopPropagation();
 
@@ -1993,6 +2226,7 @@ export default function App() {
   };
 
   const handleConnectionCurveControlMouseDown = (e: React.MouseEvent, connId: string) => {
+    if (tutorialCanvasMode) return;
     if (e.button !== 0) return;
     e.stopPropagation();
 
@@ -2011,6 +2245,7 @@ export default function App() {
   };
 
   const handlePortMouseDown = (e: React.MouseEvent, nodeId: string, port: 'left' | 'right') => {
+    if (tutorialCanvasMode) return;
     if (e.button !== 0) return;
     e.stopPropagation();
     e.preventDefault();
@@ -2033,6 +2268,8 @@ export default function App() {
   };
 
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
+
+    if (tutorialCanvasMode) return;
 
     if (e.button === 2) {
       if (focused?.type === 'connection') {
@@ -2060,6 +2297,7 @@ export default function App() {
   const handleWheel = useCallback((e: React.WheelEvent | WheelEvent) => {
     // Prevent default browser gestures (pinch-zoom, back/forward navigation)
     e.preventDefault();
+    if (tutorialCanvasMode) return;
 
     const wheelEvent = e as WheelEvent;
     const isPinchZoom = wheelEvent.ctrlKey; // macOS touchpad pinch sets ctrlKey
@@ -2098,9 +2336,10 @@ export default function App() {
         y: prev.y - wheelEvent.deltaY,
       }));
     }
-  }, []);
+  }, [tutorialCanvasMode]);
 
   const handleMouseMove = (e: React.MouseEvent) => {
+    if (tutorialCanvasMode) return;
     if (draggingCurveControl) {
       const world = getWorldPointFromClient(e.clientX, e.clientY);
       setConnections(prev => prev.map(c => {
@@ -2185,6 +2424,7 @@ export default function App() {
   };
 
   const handleMouseUp = (e: React.MouseEvent) => {
+    if (tutorialCanvasMode) return;
     if (draggingCurveControl) {
       pushHistory(nodes, connections, focused);
       setDraggingCurveControl(null);
@@ -2965,7 +3205,29 @@ export default function App() {
 
     <div
       ref={canvasRef}
-      className={`app-shell theme-${theme} w-full h-screen overflow-hidden relative font-sans select-none`}
+      className={`app-shell theme-${theme} ${tutorialCanvasMode ? 'tutorial-canvas-mode' : ''} w-full h-screen overflow-hidden relative font-sans select-none`}
+      tabIndex={tutorialCanvasMode ? -1 : undefined}
+      autoFocus={tutorialCanvasMode}
+      onMouseDownCapture={tutorialCanvasMode ? (event) => {
+        if (tutorialActionId !== 'open-settings') {
+          event.preventDefault();
+          event.stopPropagation();
+          event.currentTarget.focus({ preventScroll: true });
+        }
+      } : undefined}
+      onClickCapture={tutorialCanvasMode ? (event) => {
+        if (tutorialActionId !== 'open-settings') {
+          event.preventDefault();
+          event.stopPropagation();
+          event.currentTarget.focus({ preventScroll: true });
+        }
+      } : undefined}
+      onContextMenuCapture={tutorialCanvasMode ? (event) => {
+        if (tutorialActionId !== 'open-settings') {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      } : undefined}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={() => setHoveredEndpoint(null)}
@@ -2974,7 +3236,7 @@ export default function App() {
     >
       {/* Grid Pattern */}
       <div 
-        className="app-grid absolute inset-0 pointer-events-none opacity-[0.03]"
+        className="app-grid absolute inset-0 pointer-events-none"
         style={{
           backgroundImage: `radial-gradient(#000 1px, transparent 0)`,
           backgroundSize: `${GRID_SIZE}px ${GRID_SIZE}px`,
@@ -3579,7 +3841,7 @@ export default function App() {
       )}
 
       {/* Controls Help */}
-      <div className="absolute top-6 left-6 flex flex-col gap-4 pointer-events-none">
+      {!tutorialCanvasMode && <div className="absolute top-6 left-6 flex flex-col gap-4 pointer-events-none">
 
         <div className="flex items-center gap-6 pointer-events-auto">
 
@@ -3673,6 +3935,14 @@ export default function App() {
               {t.save}
             </button>
             <button
+              onClick={(e) => { e.stopPropagation(); setIsQuickStartOpen(true); }}
+              title={t.quickStart}
+              className="quick-start-trigger flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition-colors text-xs font-semibold"
+            >
+              <GraduationCap size={15} />
+              {t.quickStart}
+            </button>
+            <button
               onClick={(e) => { e.stopPropagation(); setIsShortcutsModalOpen(true); }}
               title={t.settings}
               className="app-button flex items-center gap-1 px-2 py-1.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-600 text-xs font-medium"
@@ -3723,10 +3993,10 @@ export default function App() {
             </div>
           )}
         </div>
-      </div>
+      </div>}
 
       {/* Style Indicator */}
-      {focused?.type === 'connection' && (
+      {!tutorialCanvasMode && focused?.type === 'connection' && (
         <div className="app-panel absolute bottom-6 right-6 bg-white px-4 py-2 rounded-full shadow-lg border border-slate-200 flex items-center gap-3 text-sm text-slate-600">
           <span className="font-medium">{t.style}</span>
           {getConnection(focused.id)?.style === 'forward' && <ArrowRight size={18} className="text-blue-500" />}
@@ -3763,6 +4033,14 @@ export default function App() {
         t={t}
         ctrlKey={ctrlKey}
       />
+      {!tutorialCanvasMode && <QuickStartGuide
+        isOpen={isQuickStartOpen}
+        onClose={closeQuickStart}
+        language={language}
+        shortcuts={shortcuts}
+        ctrlKey={ctrlKey}
+        theme={theme}
+      />}
     </div>
   );
 }

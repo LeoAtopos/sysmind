@@ -23,3 +23,4 @@ export const MIN_SCALE = 0.4;
 export const MAX_SCALE = 2.5;
 export const LANGUAGE_STORAGE_KEY = 'sysmind-language';
 export const THEME_STORAGE_KEY = 'sysmind-theme';
+export const QUICK_START_SEEN_STORAGE_KEY = 'sysmind-quick-start-seen-v1';
