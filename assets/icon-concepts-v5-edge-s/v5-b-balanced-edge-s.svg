@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <marker id="arrow-gray" viewBox="0 0 54 54" refX="48" refY="27" markerWidth="54" markerHeight="54" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+      <path d="M 6 6 L 48 27 L 6 48" fill="none" stroke="#94a3b8" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <marker id="arrow-cyan" viewBox="0 0 54 54" refX="48" refY="27" markerWidth="54" markerHeight="54" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+      <path d="M 6 6 L 48 27 L 6 48" fill="none" stroke="#22d3ee" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <rect width="1024" height="1024" rx="184" fill="#0f172a"/>
+
+  <g fill="none" stroke="#94a3b8" stroke-width="24" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="410" y="165" width="340" height="120" rx="42"/>
+    <rect x="130" y="435" width="340" height="120" rx="42"/>
+    <rect x="555" y="705" width="340" height="120" rx="42"/>
+    <path d="M 445 298 C 382 326 326 367 304 420" marker-end="url(#arrow-gray)"/>
+    <path d="M 430 570 C 463 633 508 663 542 690" marker-end="url(#arrow-gray)"/>
+  </g>
+
+  <!-- Cyan reuses real node borders and the real return connection to form one hidden S. -->
+  <g fill="none" stroke="#22d3ee" stroke-width="24" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 660 165 H 452 A 42 42 0 0 0 410 207 V 243 A 42 42 0 0 0 452 285 H 650"/>
+    <path d="M 665 705 C 720 676 775 607 786 525 C 801 413 754 324 650 285" marker-end="url(#arrow-cyan)"/>
+    <path d="M 665 705 H 600"/>
+  </g>
+</svg>

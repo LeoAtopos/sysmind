@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, ArrowRight, ArrowLeft, ArrowLeftRight, Minus, MousePointer2, Download, Upload, Save, FilePlus2, ChevronDown, ChevronUp, Settings, GraduationCap } from 'lucide-react';
+import { Search, ArrowRight, ArrowLeft, ArrowLeftRight, Minus, Download, Upload, Save, FilePlus2, ChevronDown, ChevronUp, Settings, GraduationCap } from 'lucide-react';
 
 import { QuickStartGuide } from './components/QuickStartGuide';
 import { ShortcutsModal } from './components/ShortcutsModal';
@@ -3846,8 +3846,9 @@ export default function App() {
         <div className="flex items-center gap-6 pointer-events-auto">
 
 
-          <h1 className="app-title text-xl font-bold text-slate-800 flex items-center gap-2">
-            <MousePointer2 className="app-accent-icon text-blue-500" /> SysMind
+          <h1 className="app-title flex items-center gap-2" aria-label="SysMind">
+            <img className="app-brand-mark" src="./sysmind-mark.svg" alt="" aria-hidden="true" />
+            <span className="app-brand-wordmark" aria-hidden="true"><span className="app-brand-sys">sys</span><span className="app-brand-mind">mind</span></span>
           </h1>
 
           <div className="app-panel flex items-center gap-1 bg-white/80 backdrop-blur-sm border border-slate-200 p-1 rounded-xl shadow-sm">

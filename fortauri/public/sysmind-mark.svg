@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title">
+  <title id="title">SysMind</title>
+  <defs>
+    <linearGradient id="topLoop" x1="48" y1="60" x2="220" y2="92" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#4778f5"/><stop offset="0.52" stop-color="#4f86ed"/><stop offset="1" stop-color="#64c7a3"/></linearGradient>
+    <linearGradient id="bottomLoop" x1="42" y1="164" x2="212" y2="168" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#62c7a2"/><stop offset="0.5" stop-color="#4e7ff2"/><stop offset="1" stop-color="#58b9cc"/></linearGradient>
+    <linearGradient id="leftNode" x1="28" y1="100" x2="78" y2="148" gradientUnits="userSpaceOnUse"><stop stop-color="#4c7cf5"/><stop offset="1" stop-color="#4775ee"/></linearGradient>
+    <linearGradient id="rightNode" x1="178" y1="100" x2="228" y2="148" gradientUnits="userSpaceOnUse"><stop stop-color="#62c6a2"/><stop offset="1" stop-color="#69cbaa"/></linearGradient>
+  </defs>
+  <path d="M52 90C62 52 97 31 137 31c34 0 62 17 76 50" fill="none" stroke="url(#topLoop)" stroke-width="11" stroke-linecap="round"/>
+  <path d="m199 80 15 12 8-18" fill="none" stroke="#62c6a3" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M211 151c-7 39-43 68-88 68-39 0-69-21-80-56" fill="none" stroke="url(#bottomLoop)" stroke-width="11" stroke-linecap="round"/>
+  <path d="m35 176 8-16 17 10" fill="none" stroke="#62c6a2" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="27" y="98" width="52" height="52" rx="11" fill="url(#leftNode)"/>
+  <rect x="177" y="98" width="52" height="52" rx="11" fill="url(#rightNode)"/>
+</svg>
