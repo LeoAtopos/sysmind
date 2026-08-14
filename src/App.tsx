@@ -534,6 +534,7 @@ export default function App() {
     title: t.commonActions,
     items: [
       { label: `${ctrlKey}+ +/-`, desc: t.zoom },
+      { label: language === 'zh' ? '右键 + 滚轮' : 'RMB + Wheel', desc: t.zoom },
       { label: formatShortcutLabel(shortcuts.zoomReset, ctrlKey), desc: t.zoomReset },
       { label: 'Arrows', desc: t.arrows },
       { label: formatShortcutLabel(shortcuts.undo, ctrlKey), desc: t.undo },
@@ -542,7 +543,7 @@ export default function App() {
       { label: formatShortcutLabel(shortcuts.copy, ctrlKey), desc: t.actionCopy },
       { label: formatShortcutLabel(shortcuts.paste, ctrlKey), desc: t.actionPaste },
     ],
-  }), [ctrlKey, shortcuts, t]);
+  }), [ctrlKey, language, shortcuts, t]);
   const currentShortcutHints = useMemo(() => {
     if (isEditing && focused?.type === 'node') {
       return {
@@ -634,6 +635,7 @@ export default function App() {
 
   // Native wheel event handler ref to allow adding/removing non-passive listener
   const wheelHandlerRef = useRef<((e: WheelEvent) => void) | null>(null);
+  const rightMouseButtonDownRef = useRef(false);
 
   useEffect(() => {
     if (!tutorialCanvasMode) return;
@@ -2272,6 +2274,7 @@ export default function App() {
     if (tutorialCanvasMode) return;
 
     if (e.button === 2) {
+      rightMouseButtonDownRef.current = true;
       if (focused?.type === 'connection') {
         skipNextConnectionCenterRef.current = true;
       }
@@ -2293,7 +2296,7 @@ export default function App() {
 
   };
 
-  // Handle wheel events: mouse wheel zoom, touchpad two-finger pan and pinch zoom
+  // Handle wheel events: right-button wheel zoom, touchpad two-finger pan and pinch zoom
   const handleWheel = useCallback((e: React.WheelEvent | WheelEvent) => {
     // Prevent default browser gestures (pinch-zoom, back/forward navigation)
     e.preventDefault();
@@ -2301,13 +2304,15 @@ export default function App() {
 
     const wheelEvent = e as WheelEvent;
     const isPinchZoom = wheelEvent.ctrlKey; // macOS touchpad pinch sets ctrlKey
+    const isRightButtonZoom = rightMouseButtonDownRef.current || (wheelEvent.buttons & 2) === 2;
     const hasDeltaY = Math.abs(wheelEvent.deltaY) > 0.01;
     const hasDeltaX = Math.abs(wheelEvent.deltaX) > 0.01;
 
-    if (isPinchZoom && hasDeltaY) {
-      // Touchpad pinch zoom (macOS sends ctrlKey + deltaY)
+    if ((isPinchZoom || isRightButtonZoom) && hasDeltaY) {
+      // Touchpad pinch zoom (macOS sends ctrlKey + deltaY) or right-button wheel zoom.
       // Use exponential scaling for smooth, proportional zoom
-      const zoomFactor = Math.exp(-wheelEvent.deltaY * 0.01);
+      const zoomSensitivity = isRightButtonZoom && !isPinchZoom ? 0.002 : 0.01;
+      const zoomFactor = Math.exp(-wheelEvent.deltaY * zoomSensitivity);
 
       setCanvasView(prev => {
         const nextScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, Number((prev.scale * zoomFactor).toFixed(3))));
@@ -2424,6 +2429,7 @@ export default function App() {
   };
 
   const handleMouseUp = (e: React.MouseEvent) => {
+    if (e.button === 2) rightMouseButtonDownRef.current = false;
     if (tutorialCanvasMode) return;
     if (draggingCurveControl) {
       pushHistory(nodes, connections, focused);
@@ -2526,6 +2532,25 @@ export default function App() {
     setDraggingPendingConnectionIds(null);
     setIsPanning(false);
   };
+
+  useEffect(() => {
+    const releaseRightMouseButton = (event: MouseEvent) => {
+      if (event.button !== 2) return;
+      rightMouseButtonDownRef.current = false;
+      setIsPanning(false);
+    };
+    const releaseOnWindowBlur = () => {
+      rightMouseButtonDownRef.current = false;
+      setIsPanning(false);
+    };
+
+    window.addEventListener('mouseup', releaseRightMouseButton);
+    window.addEventListener('blur', releaseOnWindowBlur);
+    return () => {
+      window.removeEventListener('mouseup', releaseRightMouseButton);
+      window.removeEventListener('blur', releaseOnWindowBlur);
+    };
+  }, []);
 
 
 

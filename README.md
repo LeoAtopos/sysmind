@@ -29,6 +29,7 @@ A powerful and intuitive system mapping tool designed for visualizing ideas, pla
 ### Navigation
 - Use arrow keys to move focus between elements
 - `Ctrl + Scroll` (or `Cmd + Scroll` on Mac) to zoom in/out
+- Hold the right mouse button and use the wheel to zoom around the pointer
 - `Ctrl + 0` (or `Cmd + 0` on Mac) to reset zoom
 - Drag the canvas to pan around
 
@@ -85,6 +86,7 @@ Each Windows release also publishes a SHA256 checksum file alongside the zip.
 | Redo              | `Ctrl + Y` / `Cmd + Y`         |
 | Zoom In           | `Ctrl + =` / `Cmd + =`         |
 | Zoom Out          | `Ctrl + -` / `Cmd + -`         |
+| Pointer Zoom      | Hold right button + wheel      |
 | Reset Zoom        | `Ctrl + 0` / `Cmd + 0`         |
 | Move Focus        | Arrow Keys                     |
 | Cycle Node Style  | `Tab`                          |
